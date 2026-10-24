@@ -1,0 +1,11 @@
+# Batch files must keep Windows line endings, or cmd can misread them
+*.bat  text eol=crlf
+
+# Models and fonts are binary: never touch their bytes
+*.onnx binary
+*.otf  binary
+*.ttf  binary
+
+# lets Git handle text files consistently
+* text=auto
+*.py text eol=lf

@@ -65,6 +65,26 @@ Rules for preset files:
 - If a flag appears twice, the last one wins.
 - `%~dp0` means "this folder", so `--comments "%~dp0comments.txt"` works from anywhere.
 
+## Control panel (GUI)
+
+```bash
+pip install -r requirements-gui.txt
+python gui.py
+```
+
+Or double-click `gui.bat` on Windows. It opens in your browser and runs only on your computer.
+
+- Every option is a control, grouped like `presets_template.bat`, with its help text.
+- The preview renders one frame of your clip at the time you pick, through the same code as a real
+  render, usually in under a second. The first preview of a clip that needs a background estimate
+  takes longer (it reads the whole clip once).
+- **Load preset** / **Save as preset** read and write the same `presets_*.bat` files `render.bat` uses.
+- **Equivalent command** shows the settings as a command line you can copy.
+- **Draft render** and **Full render** run the real script and show the result.
+
+A single-frame preview can't show effects that build up over time (echo trails, mask smoothing);
+use a draft render for those.
+
 ## Running the script directly (any OS)
 
 ```bash
@@ -85,6 +105,7 @@ ffmpeg -i out.mp4 -i input.mp4 -map 0:v:0 -map 1:a:0? -c:v libx264 -crf 18 -c:a 
 | --- | --- |
 | `pixel_effect.py` | The effect script |
 | `render.bat` | Runs a preset: `render.bat PRESET INPUT OUTPUT [draft]` |
+| `gui.py`, `gui.bat` | The browser control panel (needs `requirements-gui.txt`) |
 | `presets_*.bat` | Presets; `presets_template.bat` documents every option |
 | `comments.txt` | Chat lines for the HUD, one `username: message` per line |
 | `face_detection_yunet_2023mar.onnx` | YuNet face detector (`--detector yunet`) |

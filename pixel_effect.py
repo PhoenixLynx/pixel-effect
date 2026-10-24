@@ -26,12 +26,14 @@ Notes:
     measurements of a reference frame (ice-blue, desaturated, deep black background).
 """
 import argparse
+import copy
 import math
 import re
 import sys
 import os
 import time
 import unicodedata
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -1885,8 +1887,19 @@ def draw_custom_sigil(img, cx, cy, size, color, th, seed, t):
         one(0, color)
 
 
-def main():
-    global GLYPH_SIZE, SIGIL_SCALE, TITLE_SCALE, CHAT_BACKDROP, SIGIL_MASKS, HUD_TEXT_SCALE, cascade, yunet, HUD_PINK, HUD_CYAN, ANGEL_WHITE, ANGEL_DIM, ANGEL_RED, TERM_ORANGE
+# ---------------------------------------------------------------- entry points: parse, set up, render
+# main() = build_parser() -> setup() -> render_still() or render_video(). A GUI can call the same pieces.
+
+# Module settings that setup() changes. Saved here so every setup() starts from the same defaults,
+# even when it runs many times in one process (the GUI preview).
+_RESETTABLE = ("GLYPH_SIZE", "SIGIL_SCALE", "TITLE_SCALE", "CHAT_BACKDROP", "SIGIL_MASKS", "HUD_TEXT_SCALE", "cascade", "yunet",
+               "HUD_PINK", "HUD_CYAN", "ANGEL_WHITE", "ANGEL_DIM", "ANGEL_RED", "TERM_ORANGE", "TERM_TEXT", "UNICODE_OK",
+               "HUD_FONT", "ENOCH")
+_DEFAULTS = {name: copy.deepcopy(globals()[name]) for name in _RESETTABLE}
+
+
+def build_parser():
+    """Every command-line option, with its default and help text."""
     ap = argparse.ArgumentParser()
     ap.add_argument("input")
     ap.add_argument("output")
@@ -1993,7 +2006,15 @@ def main():
     ap.add_argument("--comments", default="", help="text file of 'username: message' lines for the comment feed")
     ap.add_argument("--no-chat", dest="chat", action="store_false", help="hide the scrolling comment feed and its backdrop; the rest of the HUD stays")
     ap.add_argument("--hud-time", type=float, default=6.0, help="(still images) which second of the HUD animation to show")
-    args = ap.parse_args()
+    return ap
+
+
+def setup(args):
+    """Turn parsed options into the settings the renderers use. Also sets this module's look globals
+    (colors, fonts, scales, detectors), starting from the defaults each time so repeated calls don't leak."""
+    global GLYPH_SIZE, SIGIL_SCALE, TITLE_SCALE, CHAT_BACKDROP, SIGIL_MASKS, HUD_TEXT_SCALE, cascade, yunet, HUD_PINK, HUD_CYAN, ANGEL_WHITE, ANGEL_DIM, ANGEL_RED, TERM_ORANGE
+    for name, value in _DEFAULTS.items():
+        globals()[name] = copy.deepcopy(value)
     GLYPH_SIZE = max(0.2, args.glyph_size)
     SIGIL_SCALE = max(0.2, args.sigil_scale)
     TITLE_SCALE = max(0.3, args.hud_title_scale)
@@ -2081,70 +2102,78 @@ def main():
             assert len(crop) == 4 and 0 <= crop[0] < crop[2] <= 1 and 0 <= crop[1] < crop[3] <= 1
         except Exception:
             raise SystemExit("--crop needs x0,y0,x1,y1 as fractions with x0<x1 and y0<y1, e.g. --crop 0.1,0,0.9,1")
-    bg_fill = bg_color = None
+    bg_color = None
     if args.background == "color":
         bg_color = parse_color(args.bg_color)
-    overlay = None
+    return SimpleNamespace(look=look, opts=opts, hud_cfg=hud_cfg, hud_fn=hud_fn, irid_kw=irid_kw, det_kw=det_kw,
+                           use_head=use_head, use_body=use_body, need_mask=need_mask, need_bg=need_bg,
+                           crop=crop, bg_color=bg_color, echo_color=echo_color)
 
-    # Still image mode
-    if os.path.splitext(args.input)[1].lower() in IMAGE_EXTS:
-        frame = cv2.imread(args.input)
-        if frame is None:
-            raise SystemExit(f"Could not read {args.input}")
-        oh, ow = frame.shape[:2]
-        cx0, cy0, cx1, cy1 = crop_rect(ow, oh, crop)
-        frame = frame[cy0:cy1, cx0:cx1]
-        binfo = None
-        if need_mask:
-            bg = None
-            if need_bg:
-                if not args.bg_image:
-                    raise SystemExit("For a still image, --cutout bgsub/hybrid needs --bg-image (a photo of the empty scene). --cutout neural does not.")
-                bgi = cv2.imread(args.bg_image)
-                if bgi is None:
-                    raise SystemExit(f"Could not read --bg-image {args.bg_image}")
-                bgi = cv2.resize(bgi, (ow, oh), interpolation=cv2.INTER_AREA)[cy0:cy1, cx0:cx1]
-                bg = cv2.resize(bgi, small_size(frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
-            mask = compute_mask(frame, bg, args.bg_threshold, {}, args.cutout, 0.0)
-            if args.background != "keep":
-                if args.background == "image":
-                    bg_fill = cv2.imread(args.bg_replace)
-                    if bg_fill is None:
-                        raise SystemExit("--background image needs --bg-replace picture.jpg")
-                    bg_fill = cv2.resize(bg_fill, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
-                frame = replace_background(frame, mask, args.background, bg_color, bg_fill)
-        if use_body:
-            frame, binfo = apply_body_effect(frame, mask, args.progress, opts, args.hud_time, 1, args.body_style == "outline")
-            print("Body found." if binfo else "No person found against the background; try a lower --bg-threshold.")
-        boxes = detect_heads(frame, args.min_neighbors, args.try_rotations, args.max_faces, args.min_face, args.detect_width, **det_kw) if use_head else []
-        if use_head:
-            print(f"Found {len(boxes)} face(s)." if boxes else "No face detected.")
-        for k, box in enumerate(boxes):
-            frame = apply_head_effect(frame, box, args.progress, opts, seed=1 + 1000 * k, cycle=k)
-        if not args.no_grade:
-            frame = grade(frame, look)
-        if args.iridescent:
-            if binfo:
-                frame = iridescence_body(frame, binfo, args.progress, args.hud_time, **irid_kw)
-            for box in boxes:
-                frame = iridescence(frame, box, args.progress, args.hud_time, **irid_kw)
-        if args.halo != "off":
-            frame = render_halos(frame, boxes, args.hud_time, args.halo)
-        fx_on = args.rgb_split > 0 or args.wobble > 0 or args.scanlines > 0
-        if fx_on and not args.fx_over_hud:
-            frame = screen_fx(frame, args.hud_time, args.rgb_split, args.wobble, args.scanlines)
-        hud_cfg["boxes"] = boxes
-        hud_cfg["body_box"] = binfo["box"] if binfo else None
-        if args.hud:
-            frame = hud_fn(frame, args.hud_time, args.progress, 24.0, hud_cfg)
-        if args.overlay:
-            frame = composite_overlay(frame, load_overlay(args.overlay, frame.shape[1], frame.shape[0]), args.overlay_opacity, args.overlay_blend)
-        if fx_on and args.fx_over_hud:
-            frame = screen_fx(frame, args.hud_time, args.rgb_split, args.wobble, args.scanlines)
-        cv2.imwrite(args.output, frame)
-        print("Wrote", args.output)
-        return
 
+def render_still(frame, args, ctx, bg=None):
+    """One finished frame through the still-image pipeline. frame = a BGR image before cropping.
+    bg = an optional small background estimate; without it, a bgsub/hybrid cutout reads --bg-image."""
+    look, opts, hud_cfg, hud_fn, irid_kw, det_kw = ctx.look, ctx.opts, ctx.hud_cfg, ctx.hud_fn, ctx.irid_kw, ctx.det_kw
+    use_head, use_body, need_mask, need_bg, crop, bg_color = ctx.use_head, ctx.use_body, ctx.need_mask, ctx.need_bg, ctx.crop, ctx.bg_color
+    bg_fill = None
+    oh, ow = frame.shape[:2]
+    cx0, cy0, cx1, cy1 = crop_rect(ow, oh, crop)
+    frame = frame[cy0:cy1, cx0:cx1]
+    binfo = None
+    if need_mask:
+        if need_bg and bg is None:
+            if not args.bg_image:
+                raise SystemExit("For a still image, --cutout bgsub/hybrid needs --bg-image (a photo of the empty scene). --cutout neural does not.")
+            bgi = cv2.imread(args.bg_image)
+            if bgi is None:
+                raise SystemExit(f"Could not read --bg-image {args.bg_image}")
+            bgi = cv2.resize(bgi, (ow, oh), interpolation=cv2.INTER_AREA)[cy0:cy1, cx0:cx1]
+            bg = cv2.resize(bgi, small_size(frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
+        mask = compute_mask(frame, bg, args.bg_threshold, {}, args.cutout, 0.0)
+        if args.background != "keep":
+            if args.background == "image":
+                bg_fill = cv2.imread(args.bg_replace)
+                if bg_fill is None:
+                    raise SystemExit("--background image needs --bg-replace picture.jpg")
+                bg_fill = cv2.resize(bg_fill, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
+            frame = replace_background(frame, mask, args.background, bg_color, bg_fill)
+    if use_body:
+        frame, binfo = apply_body_effect(frame, mask, args.progress, opts, args.hud_time, 1, args.body_style == "outline")
+        print("Body found." if binfo else "No person found against the background; try a lower --bg-threshold.")
+    boxes = detect_heads(frame, args.min_neighbors, args.try_rotations, args.max_faces, args.min_face, args.detect_width, **det_kw) if use_head else []
+    if use_head:
+        print(f"Found {len(boxes)} face(s)." if boxes else "No face detected.")
+    for k, box in enumerate(boxes):
+        frame = apply_head_effect(frame, box, args.progress, opts, seed=1 + 1000 * k, cycle=k)
+    if not args.no_grade:
+        frame = grade(frame, look)
+    if args.iridescent:
+        if binfo:
+            frame = iridescence_body(frame, binfo, args.progress, args.hud_time, **irid_kw)
+        for box in boxes:
+            frame = iridescence(frame, box, args.progress, args.hud_time, **irid_kw)
+    if args.halo != "off":
+        frame = render_halos(frame, boxes, args.hud_time, args.halo)
+    fx_on = args.rgb_split > 0 or args.wobble > 0 or args.scanlines > 0
+    if fx_on and not args.fx_over_hud:
+        frame = screen_fx(frame, args.hud_time, args.rgb_split, args.wobble, args.scanlines)
+    hud_cfg["boxes"] = boxes
+    hud_cfg["body_box"] = binfo["box"] if binfo else None
+    if args.hud:
+        frame = hud_fn(frame, args.hud_time, args.progress, 24.0, hud_cfg)
+    if args.overlay:
+        frame = composite_overlay(frame, load_overlay(args.overlay, frame.shape[1], frame.shape[0]), args.overlay_opacity, args.overlay_blend)
+    if fx_on and args.fx_over_hud:
+        frame = screen_fx(frame, args.hud_time, args.rgb_split, args.wobble, args.scanlines)
+    return frame
+
+
+def render_video(args, ctx):
+    """The whole video, frame by frame, written to args.output."""
+    look, opts, hud_cfg, hud_fn, irid_kw, det_kw = ctx.look, ctx.opts, ctx.hud_cfg, ctx.hud_fn, ctx.irid_kw, ctx.det_kw
+    use_head, use_body, need_mask, need_bg, crop, bg_color = ctx.use_head, ctx.use_body, ctx.need_mask, ctx.need_bg, ctx.crop, ctx.bg_color
+    echo_color = ctx.echo_color
+    bg_fill = overlay = None
     cap = cv2.VideoCapture(args.input)
     if not cap.isOpened():
         raise SystemExit(f"Could not open {args.input}")
@@ -2294,6 +2323,19 @@ def main():
         print("WARNING: the output file is empty. The video writer failed; tell me your OpenCV version.")
     if idx and detected == 0 and use_head:
         print("No head was detected. Try frontal, well-lit footage, or swap in a better detector.")
+
+
+def main():
+    args = build_parser().parse_args()
+    ctx = setup(args)
+    if os.path.splitext(args.input)[1].lower() in IMAGE_EXTS:
+        frame = cv2.imread(args.input)
+        if frame is None:
+            raise SystemExit(f"Could not read {args.input}")
+        cv2.imwrite(args.output, render_still(frame, args, ctx))
+        print("Wrote", args.output)
+        return
+    render_video(args, ctx)
 
 
 if __name__ == "__main__":

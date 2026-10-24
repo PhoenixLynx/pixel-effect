@@ -1970,6 +1970,8 @@ def build_parser():
                     help="fill = effects over the whole silhouette; outline = only a band along its edge")
     ap.add_argument("--theme", choices=sorted(HUD_THEMES), default="eve", help="HUD look: eve (the original), angelcore, terminal")
     ap.add_argument("--hud-tag", default="ASCENSION.exe", help="(angelcore) small tag under the title")
+    ap.add_argument("--hud-tagline", default="SERVE / PROTECT / SILENT", help="(angelcore) small spaced caps centered across the top")
+    ap.add_argument("--hud-vertical", default="SYSTEM ANGEL // ONLINE", help="(angelcore) text running up the right edge")
     ap.add_argument("--overlay", default="", help="your own artwork: a PNG with transparency, drawn over the video (resized to fit)")
     ap.add_argument("--overlay-opacity", type=float, default=1.0, help="0..1")
     ap.add_argument("--overlay-blend", choices=["normal", "screen"], default="normal",
@@ -2085,7 +2087,7 @@ def setup(args):
     if args.hud is None:
         args.hud = args.style == "eve" or args.theme != "eve"
     hud_cfg = {"title": clean_text(args.hud_title), "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "prompt": "TRANSMIT MESSAGE...",
-               "tag": clean_text(args.hud_tag), "boxes": [], "lockon": args.lockon, "sigils": args.sigils, "hearts": args.hearts}
+               "tag": clean_text(args.hud_tag), "tagline": clean_text(args.hud_tagline), "vertical": clean_text(args.hud_vertical), "boxes": [], "lockon": args.lockon, "sigils": args.sigils, "hearts": args.hearts}
     hud_fn = HUD_THEMES[args.theme] or draw_hud
     irid_kw = dict(strength=args.irid_strength, palette=args.irid_palette, glitch=args.irid_glitch,
                    tear=None if args.irid_tear < 0 else args.irid_tear, rings=args.irid_rings, ring_size=args.irid_ring_size)

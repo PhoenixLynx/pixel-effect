@@ -19,10 +19,12 @@ rem   --theme       eve | angelcore | terminal
 rem   --accent      hearts, lock-on boxes, LIVE badge: #RRGGBB or R,G,B ("" = theme default)
 rem   --hud-color   main HUD text and lines: #RRGGBB or R,G,B ("" = theme default)
 rem   --hud-tag     (angelcore) small tag under the title
+rem   --hud-tagline (angelcore) small spaced caps across the top
+rem   --hud-vertical (angelcore) text running up the right edge
 rem   --hud-time    (still images) which second of the HUD animation to show
 rem   HUD on/off:   left out = automatic (on with --style eve or a non-eve theme)
 rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
-set HUD=--theme angelcore --accent "#ff2a4d" --hud-color "#ffffff" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-time 6.0
+set HUD=--theme angelcore --accent "#ff2a4d" --hud-color "#ffffff" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
 rem   --hud-text-scale   all HUD text (1.3 = 30% bigger)

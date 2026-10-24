@@ -8,6 +8,7 @@ frame of your clip at the moment you pick, through the same code as a real rende
 template layout, so render.bat keeps working with them. Needs:  pip install gradio
 """
 import argparse
+import json
 import math
 import os
 import re
@@ -34,6 +35,40 @@ GROUP_TITLES = {"LOOK": "Look", "HUD": "HUD", "FONTS": "Fonts", "CHAT": "Chat", 
                 "SIGIL": "Sigils", "BODY": "Body and cutout", "BG": "Background", "OVERLAY": "Overlay art", "CROP": "Crop",
                 "FACE": "Face finding", "FULL": "Full-render size", "OTHER": "Other"}
 DRAFT_DEFAULT = "--scale 0.25 --max-seconds 4"
+# options that take a file path -> (file types for the Browse dialog, mode: open one / open several / save)
+_FONTS = [("Fonts", "*.ttf *.otf *.ttc")]
+_IMAGES = [("Images", "*.png *.jpg *.jpeg *.webp *.bmp")]
+PATH_FIELDS = {"--comments": ([("Text", "*.txt")], "open"), "--hud-font": (_FONTS, "open"), "--hud-title-font": (_FONTS, "open"),
+               "--emoji-font": (_FONTS, "open"), "--enochian-font": (_FONTS, "open"), "--sigil-font": (_FONTS, "open"),
+               "--sigil-image": ([("PNG", "*.png")], "many"), "--overlay": ([("PNG", "*.png")], "open"),
+               "--bg-image": (_IMAGES, "open"), "--bg-replace": (_IMAGES, "open"), "--seg-model": ([("ONNX model", "*.onnx")], "open"),
+               "--yunet-model": ([("ONNX model", "*.onnx")], "open"), "--mask-video": ([("MP4 video", "*.mp4")], "save"),
+               "INPUT": ([("Video or image", "*.mp4 *.mov *.avi *.mkv *.webm *.png *.jpg *.jpeg *.webp *.bmp")], "open"),
+               "OUTPUT": ([("MP4 video", "*.mp4"), ("PNG image", "*.png")], "save")}
+
+_DIALOG = """
+import sys, json, tkinter as tk, tkinter.filedialog as fd
+types, mode, start = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+kw = dict(filetypes=[tuple(t) for t in types] + [("All files", "*.*")], initialdir=start or None, parent=root)
+if mode == "many":
+    print(",".join(fd.askopenfilenames(**kw)))
+elif mode == "save":
+    print(fd.asksaveasfilename(defaultextension=types[0][1].split()[0][1:], **kw))
+else:
+    print(fd.askopenfilename(**kw))
+"""
+
+
+def browse(key, current):
+    """Open a Windows file dialog (in its own process, so it can't freeze the app) and return the chosen path."""
+    types, mode = PATH_FIELDS[key]
+    first = (current or "").split(",")[0].strip()
+    start = os.path.dirname(first) if first and os.path.isdir(os.path.dirname(first)) else os.getcwd()
+    out = subprocess.run([sys.executable, "-c", _DIALOG, json.dumps(types), mode, start], capture_output=True, text=True).stdout.strip()
+    if not out:                                      # dialog cancelled: keep what was there
+        return gr.skip()
+    return ",".join(os.path.normpath(p) for p in out.split(",")) if mode == "many" else os.path.normpath(out)
 RENDER_LOCK = threading.Lock()      # pixel_effect keeps its look in module globals: one render at a time
 PREVIEW_GATE = threading.Lock()     # previews wait here in turn; stale ones are skipped (see do_preview)
 TICKET_LOCK = threading.Lock()
@@ -347,16 +382,22 @@ def build_app():
             with gr.Column(scale=5):
                 with gr.Row():
                     src = gr.Textbox(label="Input video or image", placeholder=r"C:\path\to\clip.mp4", scale=4)
+                    src_browse = gr.Button("Browse…", scale=0, min_width=100)
                     upload = gr.File(label="or drop a file", type="filepath", scale=2, height=90)
                 with gr.Row():
                     preset = gr.Dropdown(preset_names(), label="Preset", scale=3)
                     load_btn = gr.Button("Load preset", scale=1)
-                controls = {}
+                controls, browse_buttons = {}, []
                 groups = [g for g in GROUP_ORDER + ["OTHER"] if any(s.group == g for s in SPECS)]
                 for g in groups:
                     with gr.Accordion(GROUP_TITLES.get(g, g), open=g in ("LOOK", "HUD")):
                         for spec in (s for s in SPECS if s.group == g):
-                            controls[spec.flag] = control_for(spec)
+                            if spec.flag in PATH_FIELDS:          # file paths get a Browse button beside the box
+                                with gr.Row():
+                                    controls[spec.flag] = control_for(spec)
+                                    browse_buttons.append((spec.flag, gr.Button("Browse…", scale=0, min_width=100)))
+                            else:
+                                controls[spec.flag] = control_for(spec)
                 with gr.Accordion("Save as preset", open=False):
                     save_name = gr.Textbox(label="Preset name", placeholder="mylook  (saves presets_mylook.bat)")
                     save_desc = gr.Textbox(label="One-line description")
@@ -373,7 +414,9 @@ def build_app():
                 status = gr.Markdown()
                 cmd = gr.Textbox(label="Equivalent command", lines=3, interactive=False, buttons=["copy"])
                 with gr.Accordion("Render", open=True):
-                    out_path = gr.Textbox(value="renders/out.mp4", label="Output file")
+                    with gr.Row():
+                        out_path = gr.Textbox(value="renders/out.mp4", label="Output file", scale=4)
+                        out_browse = gr.Button("Browse…", scale=0, min_width=100)
                     with gr.Row():
                         draft_btn = gr.Button("Draft render (quick)")
                         full_btn = gr.Button("Full render", variant="primary")
@@ -405,6 +448,10 @@ def build_app():
         gr.on([c.change for c in values] + [t_slider.release, width.release], maybe_preview,
               [live, src, t_slider, width] + values, **preview_io)
         upload.change(lambda f: f or gr.skip(), upload, src)
+        for flag, btn in browse_buttons:
+            btn.click(lambda cur, f=flag: browse(f, cur), controls[flag], controls[flag])
+        src_browse.click(lambda cur: browse("INPUT", cur), src, src)
+        out_browse.click(lambda cur: browse("OUTPUT", cur), out_path, out_path)
         src.change(clip_length, src, t_slider).then(maybe_preview, [live, src, t_slider, width] + values, **preview_io)
         load_btn.click(load_preset, preset, values + [draft_state, status])
         save_btn.click(save_preset, [save_name, save_desc, overwrite, draft_state] + values, [preset, status])

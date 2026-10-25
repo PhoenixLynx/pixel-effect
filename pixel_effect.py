@@ -3252,7 +3252,7 @@ def build_parser():
     ap.add_argument("--no-lockon", dest="lockon", action="store_false", help="hide the red lock-on boxes the angelcore and terminal themes draw on the head and body")
     ap.add_argument("--body-style", choices=["fill", "outline"], default="fill",
                     help="fill = effects over the whole silhouette; outline = only a band along its edge")
-    ap.add_argument("--theme", choices=sorted(HUD_THEMES), default="eve", help="HUD look: eve (the original), angelcore, terminal")
+    ap.add_argument("--theme", choices=sorted(HUD_THEMES), default="eve", help="HUD look: eve (the original), angelcore, terminal, security, vhs, thermal, military, scifi, y2k, modern")
     ap.add_argument("--hud-tag", default="ASCENSION.exe", help="(angelcore) small tag under the title")
     ap.add_argument("--hud-tagline", default="SERVE / PROTECT / SILENT", help="(angelcore) small spaced caps centered across the top")
     ap.add_argument("--hud-vertical", default="SYSTEM ANGEL // ONLINE", help="(angelcore) text running up the right edge")
@@ -3296,7 +3296,7 @@ def build_parser():
     ap.add_argument("--hud", action=argparse.BooleanOptionalAction, default=None,
                     help="live-stream style overlay (on by default with --style eve; --no-hud turns it off)")
     ap.add_argument("--hud-title", default="LIVE STREAM", help="title text at the top left of the HUD")
-    ap.add_argument("--layout", default="", help="a layout file (JSON) that moves or hides HUD elements, e.g. {\"move\": {\"chat\": [0, -0.1]}, \"hide\": [\"status\"]}; the GUI can make one")
+    ap.add_argument("--layout", default="", help="a layout file (JSON) that moves or hides HUD elements, e.g. {\"move\": {\"chat\": [0, -0.1]}, \"hide\": [\"status\"]}")
     ap.add_argument("--comments", default="", help="text file of 'username: message' lines for the comment feed")
     ap.add_argument("--no-chat", dest="chat", action="store_false", help="hide the scrolling comment feed and its backdrop; the rest of the HUD stays")
     ap.add_argument("--hud-clock", default="", help="date and time the security/vhs clocks start at, e.g. \"1988-09-17 17:14\" (blank = now)")

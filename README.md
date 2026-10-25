@@ -1,8 +1,9 @@
 # pixel-effect
 
-Turn a video or photo into a glitched, live-stream-style piece: a tracked head (or the whole
-person) dissolves into blocks and re-forms, with iridescence, glyph overlays, ghost trails,
-halos, signal damage and an animated HUD with a scrolling chat.
+Turn a video or photo into a glitched, stylized piece: a tracked head (or the whole person)
+dissolves into blocks and re-forms, with iridescence, glyph overlays, ghost trails, halos and
+signal damage, under one of ten animated HUDs, from a live stream with a scrolling chat to a
+security camera, a camcorder, a thermal camera, a fighter-jet display or a moving poster.
 
 Everything is one Python script, `pixel_effect.py`. Presets are small `.bat` files that set
 its options, and `render.bat` runs a preset.
@@ -37,6 +38,8 @@ arguments to list the presets.
 
 ## Presets
 
+**Glitch and live stream**
+
 | Preset | Look |
 | --- | --- |
 | `angelcore` | Angelcore HUD, body on black, Enochian glyphs, pink trails, crown halo |
@@ -47,6 +50,30 @@ arguments to list the presets.
 | `minimal` | Head only, quiet iridescence, small crown, no chat. Good first look at new footage |
 | `terminal` | Hacker terminal: orange and green panels, hex and code glyphs, blurred background |
 
+**Cameras**
+
+| Preset | Look |
+| --- | --- |
+| `security` | CCTV: fisheye, choppy frame rate, grain, timestamp, REC and a motion box on the face, signal dropouts |
+| `vhs` | Camcorder tape: PLAY, tape counter, date stamp, tracking trouble, color bleed, handheld shake |
+| `nightshot` | Camcorder night vision: green footage with the same tape overlay |
+| `thermal` | Thermal camera, rainbow palette: people run hot, °C readouts, crosshair, scale bar |
+| `thermal-iron` | The thermal camera in the ironbow palette: purple, magenta, orange, white-hot |
+
+**Graphic**
+
+| Preset | Look |
+| --- | --- |
+| `military` | Fighter-jet HUD: phosphor green tapes, banking pitch ladder, target lock on the face |
+| `scifi` | Sci-fi control panel: cyan frame, ruler, orbiting target rings on the head, gauges, teal color |
+| `y2k` | Y2K minimal: acid-yellow bar and big word on gray footage, barcode, dots, crosshairs |
+| `y2k-lilac` | Y2K minimal in soft purple with a pale lilac accent |
+| `y2k-chrome` | Y2K minimal in cool silver with a neon green accent |
+| `modern` | Moving poster: noir footage, acid-lime accent, rings orbiting the head, big spaced word, Swiss-grid type |
+| `modern-neon` | Moving poster: you glow violet, cyan and green on near-black |
+| `modern-editorial` | Moving poster: soft light paper, dark ink, crimson accent |
+| `modern-red` | Moving poster: you glow red on black with a pixel dissolve on the face |
+
 ### Make your own
 
 ```bat
@@ -54,7 +81,7 @@ copy presets_template.bat presets_mylook.bat
 ```
 
 `presets_template.bat` lists **every** option, grouped (`LOOK`, `HUD`, `FONTS`, `CHAT`, `PIXEL`,
-`IRID`, `GLYPHS`, `ECHO`, `HALO`, `DAMAGE`, `SIGIL`, `BODY`, `BG`, `OVERLAY`, `CROP`, `FACE`,
+`IRID`, `GLYPHS`, `ECHO`, `HALO`, `DAMAGE`, `CAMERA`, `SIGIL`, `BODY`, `BG`, `OVERLAY`, `CROP`, `FACE`,
 `FULL`, `DRAFT`), with comments showing allowed values and on/off switches. Edit the values,
 then `render.bat mylook input.mp4 out.mp4`.
 
@@ -85,9 +112,81 @@ Or double-click `gui.bat` on Windows. It opens in your browser and runs only on 
 A single-frame preview can't show effects that build up over time (echo trails, mask smoothing);
 use a draft render for those.
 
+## HUD themes
+
+`--theme` picks the overlay. Each one has a default color look and font, but any `--look` works with any theme.
+
+| Theme | What it draws |
+| --- | --- |
+| `eve` | The original live stream: title, LIVE badges, lock-on brackets, scrolling chat, hearts |
+| `angelcore` | Angelcore stream: tagline, sigils, vertical caps, viewers, chat, timecode |
+| `terminal` | Hacker terminal: ticker, panels, code feed, chat |
+| `security` | CCTV: corner frame, CAM label, REC, clock, motion box |
+| `vhs` | Camcorder: PLAY, tape counter, date stamp |
+| `thermal` | Thermal camera: temperature readout, spot temperatures, crosshair, scale bar |
+| `military` | Fighter-jet HUD: heading, speed and altitude tapes, pitch ladder, target lock |
+| `scifi` | Control panel: frame, ruler, target rings, gauges, chips, readouts |
+| `y2k` | Y2K minimal: accent bar, segments, starburst, dots, crosshairs, big word |
+| `modern` | Moving poster: concentric rings, Swiss-grid labels, day counter, big spaced word, info row |
+
+Make a theme your own:
+
+- `--hud-title` is the main word (the stream title, the camera label, the poster word).
+- `--accent` and `--hud-color` recolor it.
+- `--hud-text` replaces any text the HUD draws with your own, in any theme. Write the text as it
+  appears on screen, then `=`, then yours; separate rules with `;`:
+  `--hud-text "motion study=dance study; REC=LIVE"`. `old=` with nothing after it removes that text.
+- `--hud-clock "1998-09-17 17:14"` sets the date and time the clocks start at (blank = now).
+- `--layout layout.json` moves or hides parts of the HUD. Moves are fractions of the frame
+  (`[0, -0.1]` = up a tenth of the height):
+
+  ```json
+  {"move": {"word": [0, -0.1], "info": [0, 0.05]}, "hide": ["circles", "vertical"]}
+  ```
+
+  To give different themes different layouts in one file, nest them by name:
+  `{"modern": {"hide": ["scrim"]}, "security": {"hide": ["motion"]}}`.
+
+<details>
+<summary>Element names for <code>--layout</code></summary>
+
+| Theme | Elements |
+| --- | --- |
+| `eve` | title, badges, brackets, chat, input, progress, status, hearts |
+| `angelcore` | tagline, title, filename, vertical, sigil_a, sigil_b, viewers, chat, input, date, timecode, progress |
+| `terminal` | ticker, panels, feed, chat, hearts, title, input, status, progress |
+| `security` | frame, label, rec, clock, motion |
+| `vhs` | play, counter, date, title |
+| `thermal` | readout, spots, crosshair, brand, scale |
+| `military` | heading, speed, altitude, ladder, target, status, readouts |
+| `scifi` | frame, header, ruler, rings, gauges_left, gauges_right, chips, readouts |
+| `y2k` | bar, segments, burst, dots, rules, crosses, icon, word |
+| `modern` | scrim, circles, orbit, index, day, vertical, word, info |
+
+</details>
+
+## Camera and tape effects
+
+| Option | Effect |
+| --- | --- |
+| `--shake 4` | Handheld camera shake (pixels at 720p) |
+| `--fisheye 0.3` | Wide-lens barrel distortion |
+| `--fps-stutter 12` | Choppy, CCTV-style frame rate |
+| `--noise 0.3` | Sensor or tape grain |
+| `--vignette 0.5` | Darker corners |
+| `--tracking 0.4` | VHS tracking trouble: a noisy band rolls through |
+| `--bleed 6` | VHS color bleed |
+| `--dropout 0.3` | Brief lost-signal flashes, with `--dropout-text "NO SIGNAL"` |
+
 ## Color looks, tone and wash
 
-- `--look` picks a ready-made color look: `default`, `eve`, `rose`, `gold`, `teal`, `ember`, `vapor`, `noir`.
+- `--look` picks a ready-made color look:
+  - `default`, `eve`, `rose`, `gold`, `teal`, `ember`, `vapor`, `noir`
+  - cameras: `cctv`, `vhs`, `nightshot`, `thermal`, `thermal-iron`
+  - graphic: `tactical`, `chrome`, `lilac`, `acid`
+  - modern: `neon`, `editorial`, `redshift`
+
+  `thermal`, `thermal-iron`, `neon` and `redshift` make people glow against the background.
 - `--tone-shadows`, `--tone-mids`, `--tone-highlights` (colors, dark to light) build your own look;
   `--tone-strength` sets how much it replaces the original colors.
 - `--hue-shift`, `--saturation`, `--bloom`, `--chroma-shift` fine-tune any look.
@@ -114,6 +213,7 @@ Videos have no transparency, so pick how it mixes in:
 
 ```bash
 python pixel_effect.py input.mp4 out.mp4 --style eve --theme angelcore --max-seconds 5
+python pixel_effect.py input.mp4 out.mp4 --theme vhs --look vhs --tracking 0.4 --shake 4
 python pixel_effect.py photo.jpg out.png --style eve --progress 0.8     # still image
 python pixel_effect.py --help                                           # every option
 ```
@@ -149,4 +249,6 @@ their own licenses; see `THIRD_PARTY.md`.
 
 - Start every new clip with a `draft` render; tune, then render full quality.
 - No head found? Try `--detector yunet`, lower `--yunet-score`, or `--debug` to see detections.
+- Faces printed on clothing getting picked up? Limit the search to the top half with
+  `--region 0,0,1,0.5 --rank size`.
 - `--target body` and `--background` with `--cutout bgsub` need a fixed camera; use `--cutout hybrid` otherwise.

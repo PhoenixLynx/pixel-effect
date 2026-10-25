@@ -65,6 +65,8 @@ def browse(key, current):
     types, mode = PATH_FIELDS[key]
     first = (current or "").split(",")[0].strip()
     start = os.path.dirname(first) if first and os.path.isdir(os.path.dirname(first)) else os.getcwd()
+    if key in FONT_FLAGS and not (first and os.path.isfile(first)) and (HERE / "fonts").is_dir():
+        start = str(HERE / "fonts")                    # Windows hides font files in C:\Windows\Fonts; fonts\ is easier
     out = subprocess.run([sys.executable, "-c", _DIALOG, json.dumps(types), mode, start], capture_output=True, text=True).stdout.strip()
     if not out:                                      # dialog cancelled: keep what was there
         return gr.skip()
@@ -360,8 +362,19 @@ def run_render(src, out, draft_line, draft, *values):
 
 # ---------------------------------------------------------------- the page
 
+FONT_FLAGS = {"--hud-font", "--hud-title-font", "--emoji-font", "--sigil-font", "--enochian-font"}
+
+
+def font_choices():
+    """Installed fonts by name for the font dropdowns; typing filters the list."""
+    return [("(none)", "")] + [(n, n) for n in sorted(pe.installed_fonts(), key=str.lower)]
+
+
 def control_for(spec):
     label, info = spec.flag, spec.help or None
+    if spec.flag in FONT_FLAGS:
+        return gr.Dropdown(font_choices(), value=spec.default or "", label=label, allow_custom_value=True, filterable=True,
+                           info=(info or "") + " Type to search installed fonts, or Browse for a font file.")
     if spec.kind == "switch":
         return gr.Checkbox(value=False, label=label, info=info)
     if spec.kind == "tri":

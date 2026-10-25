@@ -38,6 +38,7 @@ rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
 set HUD=--theme eve --accent "" --hud-color "" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
+rem   any font option takes an installed font's name ("Segoe UI Bold") or a file path
 rem   --hud-text-scale   all HUD text (1.3 = 30% bigger)
 rem   --hud-title-scale  extra size for the big title only; stacks with the above
 set FONTS=--hud-font "" --hud-title-font "" --emoji-font "" --hud-text-scale 1.0 --hud-title-scale 1.0

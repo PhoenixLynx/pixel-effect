@@ -310,7 +310,7 @@ def find_enochian_font(path=""):
     """An Enochian .ttf/.otf: the --enochian-font path, or any Enochian*.ttf/otf next to this script or in the current folder."""
     import glob
     here = os.path.dirname(os.path.abspath(__file__))
-    for pat in ([path] if path else []) + [os.path.join(d, f"Enochian*.{e}") for d in (here, os.getcwd()) for e in ("otf", "ttf")]:
+    for pat in ([path] if path else []) + [os.path.join(d, f"Enochian*.{e}") for d in (here, os.path.join(here, "fonts"), os.getcwd()) for e in ("otf", "ttf")]:
         for hit in sorted(glob.glob(pat)):
             return hit
     return ""
@@ -964,6 +964,71 @@ EMOJI_FONTS = ["C:/Windows/Fonts/seguiemj.ttf", "/System/Library/Fonts/Apple Col
 
 def first_existing(paths):
     return next((p for p in paths if os.path.isfile(p)), "")
+
+
+# ---- Fonts by name: "Segoe UI Bold" instead of C:\Windows\Fonts\segoeuib.ttf ----------------------
+FONT_DIRS = [os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"),
+             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts"),   # fonts you installed yourself
+             "/Library/Fonts", os.path.expanduser("~/Library/Fonts"), "/usr/share/fonts", os.path.expanduser("~/.fonts"),
+             os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")]                    # fonts/ next to this script
+_FONT_INDEX = {}
+
+
+def installed_fonts():
+    """{display name: file} for every .ttf/.otf/.ttc in FONT_DIRS. Names come from the font itself ("Segoe UI Bold").
+    Reading ~700 fonts takes a few seconds, so the index is cached in a small file and rebuilt when fonts change."""
+    if _FONT_INDEX:
+        return _FONT_INDEX
+    import json
+    import tempfile
+    files = sorted({os.path.join(d, f) for top in FONT_DIRS if top and os.path.isdir(top)
+                    for d, _, names in os.walk(top) for f in names if f.lower().endswith((".ttf", ".otf", ".ttc"))})
+    sig = [len(files), max((os.path.getmtime(f) for f in files), default=0)]
+    cache = os.path.join(tempfile.gettempdir(), "pixel_effect_font_index.json")
+    try:
+        saved = json.load(open(cache, encoding="utf-8"))
+        if saved["sig"] == sig:
+            _FONT_INDEX.update(saved["fonts"])
+            return _FONT_INDEX
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        from PIL import ImageFont
+    except ImportError:                                   # no Pillow: fall back to file names
+        ImageFont = None
+    for f in files:
+        name = os.path.splitext(os.path.basename(f))[0]
+        if ImageFont is not None:
+            try:
+                family, style = ImageFont.truetype(f, 12).getname()
+                name = family if (style or "").lower() in ("regular", "normal", "book", "") else f"{family} {style}"
+            except Exception:
+                continue                                  # not a readable font
+        _FONT_INDEX.setdefault(name, f)
+    try:
+        json.dump({"sig": sig, "fonts": _FONT_INDEX}, open(cache, "w", encoding="utf-8"))
+    except OSError:
+        pass
+    return _FONT_INDEX
+
+
+def resolve_font(value, option):
+    """A font option's value -> a font file. Accepts a file path, an installed font's name ("Segoe UI Bold",
+    case doesn't matter), or a font file's name ("MATURASC.TTF"). Empty stays empty."""
+    if not value or os.path.isfile(value):
+        return value
+    fonts = installed_fonts()
+    want = value.strip().lower()
+    by_name = {k.lower(): v for k, v in fonts.items()}
+    by_file = {os.path.basename(v).lower(): v for v in fonts.values()}
+    by_stem = {os.path.splitext(os.path.basename(v))[0].lower(): v for v in fonts.values()}
+    hit = by_name.get(want) or by_name.get(want + " regular") or by_file.get(want) or by_stem.get(want)
+    if hit:
+        return hit
+    import difflib
+    close = difflib.get_close_matches(value, list(fonts), n=3, cutoff=0.5)
+    raise SystemExit(f"{option}: no font file or installed font called '{value}'."
+                     + (f" Did you mean: {', '.join(close)}?" if close else ""))
 
 
 def is_emoji_char(ch):
@@ -1925,9 +1990,9 @@ def build_parser():
     ap.add_argument("--glyph-size", type=float, default=1.0, help="size of the --digits characters (1 = default, 0.5 = half, 2 = double)")
     ap.add_argument("--hud-text-scale", type=float, default=1.0, help="size of all HUD text (1 = default, 1.3 = 30%% bigger)")
     ap.add_argument("--hud-title-scale", type=float, default=1.0, help="extra size for the big title only (1 = default, 1.5 = 50%% bigger); stacks with --hud-text-scale")
-    ap.add_argument("--hud-font", default="", help="path to a .ttf/.otf for the HUD text (default: OpenCV's built-in font)")
-    ap.add_argument("--hud-title-font", default="", help="a separate .ttf/.otf just for the big title (default: same as --hud-font)")
-    ap.add_argument("--emoji-font", default="", help="colour emoji font for comments (default: Segoe UI Emoji / Noto Color Emoji / Apple Color Emoji if found)")
+    ap.add_argument("--hud-font", default="", help="font for the HUD text: an installed font's name (\"Segoe UI Bold\") or a .ttf/.otf path (default: OpenCV's built-in font)")
+    ap.add_argument("--hud-title-font", default="", help="font just for the big title, by name or path (default: same as --hud-font)")
+    ap.add_argument("--emoji-font", default="", help="colour emoji font for comments, by name or path (default: Segoe UI Emoji / Noto Color Emoji / Apple Color Emoji if found)")
     ap.add_argument("--chat-backdrop", type=float, default=0.0, help="dark soft panel behind the chat, 0 = off, 0.5 = medium, 0.8 = strong")
     ap.add_argument("--echo", type=float, default=0.0, help="ghost trails behind the moving person (needs a cutout), 0 = off, 0.8 = strong")
     ap.add_argument("--echo-decay", type=float, default=0.88, help="how long trails last: 0.8 short, 0.95 long")
@@ -1940,9 +2005,9 @@ def build_parser():
     ap.add_argument("--fx-over-hud", action="store_true", help="apply RGB split / wobble / scanlines to the HUD as well")
     ap.add_argument("--sigil-image", default="", help="your own sigil art: one or more PNGs, comma-separated (white shape on transparent or black)")
     ap.add_argument("--sigil-scale", type=float, default=1.0, help="size of your custom sigil art (1 = default, 1.5 = 50%% bigger)")
-    ap.add_argument("--sigil-font", default="", help="a font to draw sigils from (use with --sigil-text)")
+    ap.add_argument("--sigil-font", default="", help="a font to draw sigils from, by name or path (use with --sigil-text)")
     ap.add_argument("--sigil-text", default="", help="characters to use as sigils, e.g. 'ᚠᛉ†✝'")
-    ap.add_argument("--enochian-font", default="", help="path to an Enochian .ttf/.otf (default: Enochian*.ttf/otf next to the script or in the current folder)")
+    ap.add_argument("--enochian-font", default="", help="an Enochian font, by name or path (default: Enochian*.ttf/otf next to the script, in fonts/, or in the current folder)")
     ap.add_argument("--target", choices=["head", "body", "both"], default="head",
                     help="head = face tracking (default). body = the whole person, found by background subtraction (fixed camera only). both = body plus head")
     ap.add_argument("--cutout", choices=["bgsub", "neural", "hybrid"], default="bgsub",
@@ -2021,6 +2086,7 @@ def setup(args):
     SIGIL_SCALE = max(0.2, args.sigil_scale)
     TITLE_SCALE = max(0.3, args.hud_title_scale)
     CHAT_BACKDROP = min(0.95, max(0.0, args.chat_backdrop)) if args.chat else 0.0
+    args.sigil_font = resolve_font(args.sigil_font, "--sigil-font")
     if args.sigil_image or (args.sigil_font and args.sigil_text):
         SIGIL_MASKS = load_sigils(args.sigil_image, args.sigil_font, args.sigil_text)
         if not SIGIL_MASKS:
@@ -2032,11 +2098,10 @@ def setup(args):
     echo_color = parse_color(args.echo_color) if args.echo_color else None
     HUD_TEXT_SCALE = max(0.3, args.hud_text_scale)
     global UNICODE_OK
-    for key, flag in (("body", args.hud_font), ("title", args.hud_title_font), ("emoji", args.emoji_font)):
+    for key, flag, option in (("body", args.hud_font, "--hud-font"), ("title", args.hud_title_font, "--hud-title-font"),
+                              ("emoji", args.emoji_font, "--emoji-font")):
         if flag:
-            if not os.path.isfile(flag):
-                sys.exit(f"font file not found: {flag}")
-            HUD_FONT[key] = flag
+            HUD_FONT[key] = resolve_font(flag, option)
     try:
         import PIL  # noqa: F401
         have_pil = True
@@ -2076,7 +2141,7 @@ def setup(args):
             import PIL  # noqa: F401
         except ImportError:
             raise SystemExit("Enochian glyphs need Pillow:  pip install pillow")
-        ENOCH["path"] = find_enochian_font(args.enochian_font)
+        ENOCH["path"] = find_enochian_font(resolve_font(args.enochian_font, "--enochian-font"))
         if not ENOCH["path"]:
             raise SystemExit("No Enochian font found. Put Enochian.otf (or EnochianPlain.ttf) next to this script, or pass --enochian-font path.")
         print("Enochian font:", ENOCH["path"])

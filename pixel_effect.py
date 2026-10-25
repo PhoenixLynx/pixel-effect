@@ -2323,7 +2323,7 @@ def render_still(frame, args, ctx, bg=None):
         mask = compute_mask(frame, bg, args.bg_threshold, {}, args.cutout, 0.0)
         if args.background != "keep":
             if args.background == "image":
-                bg_fill = cv2.imread(args.bg_replace)
+                bg_fill = cv2.imread(args.bg_replace) if args.bg_replace else None
                 if bg_fill is None:
                     raise SystemExit("--background image needs --bg-replace picture.jpg")
                 bg_fill = cv2.resize(bg_fill, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
@@ -2391,7 +2391,7 @@ def render_video(args, ctx):
         print("Estimating the background (needs a fixed camera)...")
         bg_small = build_background(args.input, limit, args.bg_image, crop, args.bg_threshold)
     if args.background == "image":
-        bg_fill = cv2.imread(args.bg_replace)
+        bg_fill = cv2.imread(args.bg_replace) if args.bg_replace else None
         if bg_fill is None:
             raise SystemExit("--background image needs --bg-replace picture.jpg")
         bg_fill = cv2.resize(bg_fill, (W, H), interpolation=cv2.INTER_AREA)

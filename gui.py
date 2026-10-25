@@ -236,12 +236,15 @@ def render_preview(src, t, width, values):
     return cv2.cvtColor(out, cv2.COLOR_BGR2RGB), f"Rendered in {time.perf_counter() - started:.2f} s{note}"
 
 
-def clip_length(src):
+def clip_length(src, t):
+    """Fit the time slider to a newly loaded clip. The value must move inside the new range too: a slider
+    whose value is past its maximum makes Gradio reject every event that reads it."""
     try:
         _, is_video, dur = read_frame(src, 0)
-        return gr.update(maximum=max(0.1, round(dur, 2)), interactive=is_video)
     except SystemExit:
         return gr.update()
+    top = max(0.1, round(dur, 2))
+    return gr.update(maximum=top, value=min(t or 0.0, top) if is_video else 0.0, interactive=is_video)
 
 
 # ---------------------------------------------------------------- presets
@@ -494,7 +497,7 @@ def build_app():
             box.change(lambda v: to_hex(v) if HEX_RE.match(to_hex(v)) else gr.skip(), box, picker)   # typed/loaded hex -> wheel
         src_browse.click(lambda cur: browse("INPUT", cur), src, src)
         out_browse.click(lambda cur: browse("OUTPUT", cur), out_path, out_path)
-        src.change(clip_length, src, t_slider).then(maybe_preview, [live, src, t_slider, width] + values, **preview_io)
+        src.change(clip_length, [src, t_slider], t_slider).then(maybe_preview, [live, src, t_slider, width] + values, **preview_io)
         load_btn.click(load_preset, preset, values + [draft_state, status])
         save_btn.click(save_preset, [save_name, save_desc, overwrite, draft_state] + values, [preset, status])
         draft_btn.click(run_render, [src, out_path, draft_state, gr.State(True)] + values, [log, video], concurrency_limit=1)

@@ -28,10 +28,10 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "pixel_effect.py"
 TEMPLATE = HERE / "presets_template.bat"
 SET_RE = re.compile(r"^\s*set\s+([A-Za-z_]+)=(.*)$", re.I)
-GROUP_ORDER = ["LOOK", "HUD", "FONTS", "CHAT", "PIXEL", "IRID", "GLYPHS", "ECHO", "HALO", "DAMAGE", "SIGIL",
+GROUP_ORDER = ["LOOK", "HUD", "FONTS", "CHAT", "PIXEL", "IRID", "GLYPHS", "ECHO", "HALO", "DAMAGE", "CAMERA", "SIGIL",
                "BODY", "BG", "OVERLAY", "CROP", "FACE", "FULL"]
 GROUP_TITLES = {"LOOK": "Look", "HUD": "HUD", "FONTS": "Fonts", "CHAT": "Chat", "PIXEL": "Pixel dissolve",
-                "IRID": "Iridescence", "GLYPHS": "Glyphs", "ECHO": "Echo trails", "HALO": "Halo", "DAMAGE": "Signal damage",
+                "IRID": "Iridescence", "GLYPHS": "Glyphs", "ECHO": "Echo trails", "HALO": "Halo", "DAMAGE": "Signal damage", "CAMERA": "Camera",
                 "SIGIL": "Sigils", "BODY": "Body and cutout", "BG": "Background", "OVERLAY": "Overlay art", "CROP": "Crop",
                 "FACE": "Face finding", "FULL": "Full-render size", "OTHER": "Other"}
 DRAFT_DEFAULT = "--scale 0.25 --max-seconds 4"

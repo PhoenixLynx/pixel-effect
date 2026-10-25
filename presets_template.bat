@@ -23,6 +23,7 @@ rem ---- LOOK: overall style, the base dissolve, and the color look
 rem   --style   default | eve   (eve = ice-blue look plus digits, smear, particles)
 rem   --mode    blocks | halftone | blur | none
 rem   --look    auto | default | eve | rose | gold | teal | ember | vapor | noir   (auto = eve with --style eve)
+rem             camera looks: cctv | vhs | nightshot | thermal | thermal-iron
 rem   --tone-shadows / --tone-mids / --tone-highlights   your own colors, dark to light, #RRGGBB ("" = the look's)
 rem   --tone-strength  0..1 how much the tone replaces the original colors (-1 = the look's own)
 rem   --wash           a flat color over everything, #RRGGBB ("" = none)
@@ -93,8 +94,16 @@ set HALO=--halo off
 
 rem ---- DAMAGE: whole-frame glitch (pixels at 720p)
 rem   --rgb-split  try 4-10    --wobble  try 2-8    --scanlines  0-0.9, try 0.25
+rem   --tracking   VHS tracking band and tear 0..1    --bleed  VHS color smear, try 4-8
+rem   --dropout    lost-signal flashes 0..1 (0.3 = now and then), showing --dropout-text
 rem   switches: --fx-over-hud   (damage the HUD too)
-set DAMAGE=--rgb-split 0.0 --wobble 0.0 --scanlines 0.0
+set DAMAGE=--rgb-split 0.0 --wobble 0.0 --scanlines 0.0 --tracking 0.0 --bleed 0.0 --dropout 0.0 --dropout-text "NO SIGNAL"
+
+rem ---- CAMERA: what the camera itself adds (pixels at 720p)
+rem   --fps-stutter  choppy frame rate in frames per second, like CCTV (try 8-12; 0 = smooth)
+rem   --shake        handheld shake, try 3-8      --fisheye   wide-lens bulge 0..1, try 0.3
+rem   --vignette     darker corners 0..1          --noise     sensor/tape grain 0..1
+set CAMERA=--fps-stutter 0.0 --shake 0.0 --fisheye 0.0 --vignette 0.0 --noise 0.0
 
 rem ---- SIGIL: your own sigil art for angelcore
 rem   --sigil-image  one or more PNGs, comma-separated

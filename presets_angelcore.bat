@@ -1,6 +1,6 @@
 @echo off
 rem ======================================================================
-rem  Preset: angelcore. Your look: angelcore HUD, outline-free body on black, Enochian glyphs, pink trails, crown.
+rem  Preset: angelcore. 
 rem  Same layout as presets_template.bat: every option is listed, with
 rem  this preset's values. Change a value or paste in a listed switch.
 rem      render.bat angelcore input.mp4 output.mp4 [draft]
@@ -12,6 +12,7 @@ rem ---- LOOK: overall style, the base dissolve, and the color look
 rem   --style   default | eve   (eve = ice-blue look plus digits, smear, particles)
 rem   --mode    blocks | halftone | blur | none
 rem   --look    auto | default | eve | rose | gold | teal | ember | vapor | noir   (auto = eve with --style eve)
+rem             camera looks: cctv | vhs | nightshot | thermal | thermal-iron
 rem   --tone-shadows / --tone-mids / --tone-highlights   your own colors, dark to light, #RRGGBB ("" = the look's)
 rem   --tone-strength  0..1 how much the tone replaces the original colors (-1 = the look's own)
 rem   --wash           a flat color over everything, #RRGGBB ("" = none)
@@ -29,8 +30,9 @@ rem   --hud-tagline (angelcore) small spaced caps across the top
 rem   --hud-vertical (angelcore) text running up the right edge
 rem   --hud-time    (still images) which second of the HUD animation to show
 rem   HUD on/off:   left out = automatic (on with --style eve or a non-eve theme)
+rem   --layout      a layout file (JSON) that moves or hides HUD elements ("" = the theme's own layout)
 rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
-set HUD=--theme angelcore --accent "#ff3fa4" --hud-color "#cfe8ff" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0 --no-lockon
+set HUD=--theme angelcore --accent "#ff3fa4" --hud-color "#cfe8ff" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0 --layout "" --no-lockon
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
 rem   any font option takes an installed font's name ("Segoe UI Bold") or a file path
@@ -81,8 +83,16 @@ set HALO=--halo crown
 
 rem ---- DAMAGE: whole-frame glitch (pixels at 720p)
 rem   --rgb-split  try 4-10    --wobble  try 2-8    --scanlines  0-0.9, try 0.25
+rem   --tracking   VHS tracking band and tear 0..1    --bleed  VHS color smear, try 4-8
+rem   --dropout    lost-signal flashes 0..1 (0.3 = now and then), showing --dropout-text
 rem   switches: --fx-over-hud   (damage the HUD too)
-set DAMAGE=--rgb-split 3 --wobble 1.5 --scanlines 0.25
+set DAMAGE=--rgb-split 3 --wobble 1.5 --scanlines 0.25 --tracking 0.0 --bleed 0.0 --dropout 0.0 --dropout-text "NO SIGNAL"
+
+rem ---- CAMERA: what the camera itself adds (pixels at 720p)
+rem   --fps-stutter  choppy frame rate in frames per second, like CCTV (try 8-12; 0 = smooth)
+rem   --shake        handheld shake, try 3-8      --fisheye   wide-lens bulge 0..1, try 0.3
+rem   --vignette     darker corners 0..1          --noise     sensor/tape grain 0..1
+set CAMERA=--fps-stutter 0.0 --shake 0.0 --fisheye 0.0 --vignette 0.0 --noise 0.0
 
 rem ---- SIGIL: your own sigil art for angelcore
 rem   --sigil-image  one or more PNGs, comma-separated

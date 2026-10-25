@@ -81,6 +81,19 @@ LOOKS = {
     "vapor": _look([(0, (10, 4, 30)), (80, (70, 20, 110)), (150, (200, 60, 170)), (210, (120, 220, 240)), (255, (235, 250, 255))], bloom=0.3),
     "noir": _look([(0, (0, 0, 0)), (60, (20, 20, 22)), (150, (130, 130, 135)), (255, (250, 250, 250))],
                   strength=1.0, saturation=0.0, chroma=0, bloom=0.3, scanlines=0.08),
+    # camera looks (pair with the matching --theme)
+    "cctv": _look([(0, (6, 9, 14)), (110, (88, 104, 120)), (200, (176, 190, 200)), (255, (232, 240, 244))],
+                  strength=0.92, chroma=0, bloom=0.12),
+    "vhs": dict(_look([(0, (22, 12, 28)), (128, (140, 112, 104)), (255, (255, 242, 226))], strength=0.22,
+                      saturation=0.9, chroma=3, bloom=0.3), lift=0.07),
+    "nightshot": _look([(0, (2, 8, 3)), (90, (24, 92, 34)), (180, (130, 230, 130)), (255, (226, 255, 222))],
+                       strength=1.0, chroma=1, bloom=0.45),
+    "thermal": dict(_look([(0, (0, 0, 70)), (40, (0, 20, 200)), (95, (0, 200, 255)), (140, (40, 255, 120)),
+                           (180, (255, 240, 0)), (225, (255, 70, 0)), (255, (200, 0, 0))],
+                          strength=1.0, chroma=0, bloom=0.0), normalize=True, blur=1.6, heat_people=True),
+    "thermal-iron": dict(_look([(0, (8, 0, 30)), (60, (70, 0, 120)), (120, (190, 30, 120)), (170, (245, 100, 25)),
+                                (220, (255, 200, 50)), (255, (255, 255, 225))],
+                               strength=1.0, chroma=0, bloom=0.1), normalize=True, blur=1.6, heat_people=True),
 }
 
 
@@ -933,8 +946,16 @@ def apply_body_effect(frame, mask, progress, opts, t, seed, outline=False):
 
 
 # ---- Color look -----------------------------------------------------------------------
-def gradient_map(frame, stops, strength):
+def gradient_map(frame, stops, strength, normalize=False, heat=None):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if normalize:                                        # use the whole palette: stretch the 2nd..98th percentile to 0..255
+        lo, hi = np.percentile(gray[::4, ::4], (2, 98))
+        gray = np.clip((gray.astype(np.float32) - lo) * (255.0 / max(1.0, hi - lo)), 0, 255).astype(np.uint8)
+    if heat is not None:                                 # thermal: people are the warm thing in the scene, with a glow
+        h = np.clip((heat - 0.35) / 0.3, 0, 1)            # the person model is soft: background ~0.25, people ~0.75
+        h = h * h * (3 - 2 * h)                           # smoothstep: clean warm/cool split with soft edges
+        glow = cv2.GaussianBlur(h, (0, 0), max(2.0, 0.015 * frame.shape[0]))
+        gray = np.clip(gray.astype(np.float32) * 0.42 + np.maximum(h, glow * 0.7) * 140, 0, 255).astype(np.uint8)
     xs = [s[0] for s in stops]
     lut = np.zeros((256, 1, 3), np.uint8)
     for c in range(3):                                   # BGR channel c uses RGB index 2 - c
@@ -943,10 +964,12 @@ def gradient_map(frame, stops, strength):
     return cv2.addWeighted(mapped, strength, frame, 1 - strength, 0)
 
 
-def grade(frame, look):
+def grade(frame, look, heat=None):
     out = frame
     if look.get("gradient_stops") and look.get("gradient_strength"):
-        out = gradient_map(out, look["gradient_stops"], look["gradient_strength"])
+        out = gradient_map(out, look["gradient_stops"], look["gradient_strength"], look.get("normalize", False), heat)
+        if look.get("blur"):                                 # thermal sensors are soft: blur after mapping
+            out = cv2.GaussianBlur(out, (0, 0), look["blur"] * out.shape[0] / 720.0)
     if look["hue_shift"] or look["saturation"] != 1.0:
         hsv = cv2.cvtColor(out, cv2.COLOR_BGR2HSV).astype(np.float32)
         hsv[..., 0] = (hsv[..., 0] + look["hue_shift"] / 2) % 180
@@ -968,6 +991,8 @@ def grade(frame, look):
         out = (np.round(out / 255.0 * (n - 1)) / (n - 1) * 255).astype(np.uint8)
     if look.get("wash"):
         out = color_wash(out, *look["wash"])
+    if look.get("lift"):                                     # washed-out tape: blacks lifted to gray
+        out = cv2.addWeighted(out, 1 - look["lift"], np.full_like(out, 255), look["lift"], 0)
     if look["scanlines"]:
         out = out.astype(np.float32)
         out[::3] *= 1 - look["scanlines"]
@@ -2020,6 +2045,140 @@ def screen_fx(frame, t, split, wobble, scan):
     return out
 
 
+# ---- Camera and tape effects (all off by default) -----------------------------------------------------
+_FX_CACHE = {}
+
+
+def _cached(key, make):
+    if key not in _FX_CACHE:
+        if len(_FX_CACHE) > 16:
+            _FX_CACHE.clear()
+        _FX_CACHE[key] = make()
+    return _FX_CACHE[key]
+
+
+def handheld_shake(frame, t, amount):
+    """Gentle handheld drift and jitter: layered slow and quick wobbles, slightly zoomed in so no border shows."""
+    H, W = frame.shape[:2]
+    a = amount * H / 720.0
+    dx = a * (0.6 * math.sin(1.3 * t + 0.4) + 0.3 * math.sin(2.9 * t + 1.7) + 0.1 * math.sin(7.3 * t))
+    dy = a * (0.6 * math.sin(1.1 * t + 2.2) + 0.3 * math.sin(3.4 * t + 0.9) + 0.1 * math.sin(6.7 * t + 0.3))
+    rot = amount * 0.06 * math.sin(0.9 * t + 1.1)
+    zoom = 1 + 1.6 * a / min(W, H)
+    M = cv2.getRotationMatrix2D((W / 2, H / 2), rot, zoom)
+    M[:, 2] += (dx, dy)
+    return cv2.warpAffine(frame, M, (W, H), borderMode=cv2.BORDER_REFLECT)
+
+
+def fisheye(frame, amount):
+    """Barrel distortion, like a wide security-camera lens; zoomed so the corners stay filled."""
+    H, W = frame.shape[:2]
+
+    def maps():
+        k = 0.45 * amount
+        ys, xs = np.mgrid[0:H, 0:W].astype(np.float32)
+        nx, ny = (xs - W / 2) / (W / 2), (ys - H / 2) / (H / 2)
+        r2 = nx * nx * (W / max(W, H)) ** 2 + ny * ny * (H / max(W, H)) ** 2
+        f = (1 + k * r2) / (1 + k)                    # /(1+k): the corners map inside the frame
+        return (nx * f * W / 2 + W / 2).astype(np.float32), (ny * f * H / 2 + H / 2).astype(np.float32)
+    mx, my = _cached(("fisheye", W, H, round(amount, 3)), maps)
+    return cv2.remap(frame, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+
+def vignette(frame, amount):
+    H, W = frame.shape[:2]
+
+    def mask():
+        ys, xs = np.mgrid[0:H, 0:W].astype(np.float32)
+        r2 = ((xs - W / 2) / (W / 2)) ** 2 * 0.5 + ((ys - H / 2) / (H / 2)) ** 2 * 0.5
+        return np.clip(1 - amount * r2 ** 1.3, 0, 1)[..., None].astype(np.float32)
+    return (frame.astype(np.float32) * _cached(("vignette", W, H, round(amount, 3)), mask)).astype(np.uint8)
+
+
+def sensor_noise(frame, t, amount):
+    """Fresh grain every frame (monochrome, like a cheap sensor or tape)."""
+    H, W = frame.shape[:2]
+    rng = np.random.default_rng(int(t * 30) + 4242)
+    small = rng.normal(0, 38 * amount, (H // 2 + 1, W // 2 + 1)).astype(np.float32)
+    grain = cv2.resize(small, (W, H), interpolation=cv2.INTER_NEAREST)[..., None]
+    return np.clip(frame.astype(np.float32) + grain, 0, 255).astype(np.uint8)
+
+
+def color_bleed(frame, px):
+    """VHS chroma smear: color runs sideways past the edges while brightness stays sharp."""
+    H = frame.shape[0]
+    k = max(1, int(px * H / 720.0))
+    ycc = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    for c in (1, 2):
+        ch = cv2.blur(ycc[..., c], (2 * k + 1, 1))
+        ycc[..., c] = np.roll(ch, k // 2 + 1, axis=1)
+    return cv2.cvtColor(ycc, cv2.COLOR_YCrCb2BGR)
+
+
+def tape_tracking(frame, t, amount):
+    """VHS tracking trouble: a noisy band rolls up the picture, the bottom rows tear (head-switching noise),
+    and now and then the whole frame jumps."""
+    H, W = frame.shape[:2]
+    s = H / 720.0
+    out = frame.copy()
+    rng = np.random.default_rng(int(t * 30) + 77)
+    band_h = max(4, int((0.03 + 0.05 * amount) * H))
+    y0 = int(((-t * 0.12) % 1.3 - 0.15) * H)                   # the band rolls upward and wraps
+    for y in range(max(0, y0), min(H, y0 + band_h)):
+        shift = int(rng.normal(0, 14 * s * amount))
+        out[y] = np.roll(out[y], shift, axis=0)
+        if rng.random() < 0.5 * amount:
+            xs = rng.integers(0, W, int(W * 0.08 * amount) + 1)
+            out[y, xs] = 230
+    hs = max(2, int(0.025 * H))                                # head-switching tear along the bottom
+    for y in range(H - hs, H):
+        out[y] = np.roll(out[y], int((y - (H - hs)) * 3 * s * amount + rng.normal(0, 3 * s)), axis=0)
+    if rng.random() < 0.03 * amount:                           # occasional vertical jump
+        out = np.roll(out, int(rng.integers(3, 12) * s), axis=0)
+    return out
+
+
+def camera_fx(frame, t, args):
+    """The camera/tape effects, in the order a real camera would add them."""
+    if args.shake > 0:
+        frame = handheld_shake(frame, t, args.shake)
+    if args.fisheye > 0:
+        frame = fisheye(frame, args.fisheye)
+    if args.bleed > 0:
+        frame = color_bleed(frame, args.bleed)
+    if args.tracking > 0:
+        frame = tape_tracking(frame, t, args.tracking)
+    if args.noise > 0:
+        frame = sensor_noise(frame, t, args.noise)
+    if args.vignette > 0:
+        frame = vignette(frame, args.vignette)
+    return frame
+
+
+def in_dropout(t, rate):
+    """Is the signal lost at second t? rate 0..1 = roughly the share of 3-second windows that drop out once."""
+    win = int(t // 3)
+    rng = np.random.default_rng(win * 9973 + 5)
+    if rng.random() >= rate:
+        return False
+    start, length = rng.uniform(0, 2.2), rng.uniform(0.25, 0.8)
+    return start <= t - win * 3 < start + length
+
+
+def signal_lost(frame, t, text):
+    """A lost feed: dark blue-black static with a centered message, like a cheap wireless monitor."""
+    H, W = frame.shape[:2]
+    s = H / 720.0
+    rng = np.random.default_rng(int(t * 30) + 11)
+    out = np.clip(rng.normal(14, 7, (H // 4 + 1, W // 4 + 1)), 0, 255).astype(np.uint8)
+    out = cv2.resize(out, (W, H), interpolation=cv2.INTER_NEAREST)
+    out = cv2.merge([np.clip(out.astype(np.int16) + 18, 0, 255).astype(np.uint8), out, out])
+    if text:
+        (tw, th_), _ = cv2.getTextSize(text, FONT, 0.9 * s, max(1, int(2 * s)))
+        put_text(out, text, ((W - tw) // 2, (H + th_) // 2), FONT, 0.9 * s, (255, 170, 80), max(1, int(2 * s)), cv2.LINE_AA)
+    return out
+
+
 def draw_halo(layer, box, s, t, color, th, style):
     """Angelic crown (a tilted ring of ticks and orbiting beads above the head) and/or a broken mandala ring behind it."""
     cx, cy, bw, bh = box
@@ -2170,7 +2329,8 @@ def build_parser():
     ap.add_argument("--mode", choices=["blocks", "halftone", "blur", "none"], default="blocks",
                     help="base dissolve: square blocks, a hex lattice of dots, a growing blur, or nothing (use with --ripple or --moire)")
     ap.add_argument("--look", choices=["auto"] + list(LOOKS), default="auto",
-                    help="color look: auto = eve with --style eve, otherwise default; or rose, gold, teal, ember, vapor, noir")
+                    help="color look: auto = eve with --style eve, otherwise default; or rose, gold, teal, ember, vapor, noir; "
+                         "camera looks cctv, vhs, nightshot, thermal, thermal-iron")
     ap.add_argument("--tone-shadows", default="", help="your own tone: color for the darkest parts, #RRGGBB (replaces the look's colors; default black)")
     ap.add_argument("--tone-mids", default="", help="your own tone: color for the midtones (default: halfway between shadows and highlights)")
     ap.add_argument("--tone-highlights", default="", help="your own tone: color for the brightest parts (default white)")
@@ -2214,6 +2374,15 @@ def build_parser():
     ap.add_argument("--wobble", type=float, default=0.0, help="wavy/tearing scanlines in pixels at 720p (try 2-8)")
     ap.add_argument("--scanlines", type=float, default=0.0, help="CRT scanline darkening 0-0.9 (try 0.25)")
     ap.add_argument("--fx-over-hud", action="store_true", help="apply RGB split / wobble / scanlines to the HUD as well")
+    ap.add_argument("--tracking", type=float, default=0.0, help="VHS tracking trouble 0..1: a noisy band rolls through, the bottom rows tear")
+    ap.add_argument("--bleed", type=float, default=0.0, help="VHS color bleed in pixels at 720p: color smears sideways (try 4-8)")
+    ap.add_argument("--dropout", type=float, default=0.0, help="signal dropouts 0..1: brief lost-feed flashes (0.3 = now and then)")
+    ap.add_argument("--dropout-text", default="NO SIGNAL", help="message shown during a dropout")
+    ap.add_argument("--fps-stutter", type=float, default=0.0, help="choppy frame rate: hold frames to this many per second, like CCTV (try 8-12; 0 = off)")
+    ap.add_argument("--shake", type=float, default=0.0, help="handheld camera shake in pixels at 720p (try 3-8)")
+    ap.add_argument("--fisheye", type=float, default=0.0, help="wide-lens barrel distortion 0..1 (try 0.3)")
+    ap.add_argument("--vignette", type=float, default=0.0, help="darker corners 0..1 (try 0.5)")
+    ap.add_argument("--noise", type=float, default=0.0, help="sensor/tape grain 0..1 (try 0.3)")
     ap.add_argument("--sigil-image", default="", help="your own sigil art: one or more PNGs, comma-separated (white shape on transparent or black)")
     ap.add_argument("--sigil-scale", type=float, default=1.0, help="size of your custom sigil art (1 = default, 1.5 = 50%% bigger)")
     ap.add_argument("--sigil-font", default="", help="a font to draw sigils from, by name or path (use with --sigil-text)")
@@ -2390,7 +2559,7 @@ def setup(args):
     use_body = args.target in ("body", "both")
     need_mask = use_body or args.background != "keep" or args.echo > 0
     need_bg = need_mask and args.cutout != "neural"
-    if need_mask and args.cutout != "bgsub":
+    if (need_mask and args.cutout != "bgsub") or (look.get("heat_people") and not args.no_grade):
         load_seg_model(args.seg_model)
     crop = None
     if args.crop:
@@ -2443,7 +2612,7 @@ def render_still(frame, args, ctx, bg=None):
     for k, box in enumerate(boxes):
         frame = apply_head_effect(frame, box, args.progress, opts, seed=1 + 1000 * k, cycle=k)
     if not args.no_grade:
-        frame = grade(frame, look)
+        frame = grade(frame, look, neural_mask(frame) if look.get("heat_people") else None)
     if args.iridescent:
         if binfo:
             frame = iridescence_body(frame, binfo, args.progress, args.hud_time, **irid_kw)
@@ -2454,6 +2623,9 @@ def render_still(frame, args, ctx, bg=None):
     fx_on = args.rgb_split > 0 or args.wobble > 0 or args.scanlines > 0
     if fx_on and not args.fx_over_hud:
         frame = screen_fx(frame, args.hud_time, args.rgb_split, args.wobble, args.scanlines)
+    frame = camera_fx(frame, args.hud_time, args)
+    if args.dropout > 0 and in_dropout(args.hud_time, args.dropout):
+        frame = signal_lost(frame, args.hud_time, args.dropout_text)
     hud_cfg["boxes"] = boxes
     hud_cfg["body_box"] = binfo["box"] if binfo else None
     if args.hud:
@@ -2511,6 +2683,7 @@ def render_video(args, ctx):
     spent = dict.fromkeys(names, 0.0)
     tracker = FaceTracker(args.max_faces, args.hold, args.confirm)
     detected, idx = 0, 0
+    held, held_tick = None, None                               # --fps-stutter
     t_start = last_log = time.perf_counter()
     while True:
         t0 = time.perf_counter()
@@ -2555,7 +2728,7 @@ def render_video(args, ctx):
 
         t0 = time.perf_counter()
         if not args.no_grade:
-            frame = grade(frame, look)
+            frame = grade(frame, look, neural_mask(frame) if look.get("heat_people") else None)
         if args.iridescent:
             if binfo:
                 frame = iridescence_body(frame, binfo, bprog, t, **irid_kw)
@@ -2569,6 +2742,9 @@ def render_video(args, ctx):
         fx_on = args.rgb_split > 0 or args.wobble > 0 or args.scanlines > 0
         if fx_on and not args.fx_over_hud:
             frame = screen_fx(frame, t, args.rgb_split, args.wobble, args.scanlines)
+        frame = camera_fx(frame, t, args)
+        if args.dropout > 0 and in_dropout(t, args.dropout):
+            frame = signal_lost(frame, t, args.dropout_text)
         hud_cfg["boxes"] = [pb for pb, _ in progs]
         hud_cfg["body_box"] = binfo["box"] if binfo else None
         if args.hud:
@@ -2594,6 +2770,12 @@ def render_video(args, ctx):
                 cv2.putText(frame, f"#{track['id']} hits={track['hits']} missed={track['missed']}",
                             (int(cx - bw / 2), max(12, int(cy - bh / 2) - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
+        if args.fps_stutter > 0:                              # choppy frame rate: hold each frame for 1/N s
+            tick = int(t * args.fps_stutter)
+            if held is not None and tick == held_tick:
+                frame = held
+            else:
+                held, held_tick = frame, tick
         t0 = time.perf_counter()
         writer.write(frame)
         spent["read+write"] += time.perf_counter() - t0

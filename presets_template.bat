@@ -40,8 +40,9 @@ rem   --hud-tagline (angelcore) small spaced caps across the top
 rem   --hud-vertical (angelcore) text running up the right edge
 rem   --hud-time    (still images) which second of the HUD animation to show
 rem   HUD on/off:   left out = automatic (on with --style eve or a non-eve theme)
+rem   --layout      a layout file (JSON) that moves or hides HUD elements ("" = the theme's own layout)
 rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
-set HUD=--theme eve --accent "" --hud-color "" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0
+set HUD=--theme eve --accent "" --hud-color "" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0 --layout ""
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
 rem   any font option takes an installed font's name ("Segoe UI Bold") or a file path

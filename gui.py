@@ -42,7 +42,7 @@ PATH_FIELDS = {"--comments": ([("Text", "*.txt")], "open"), "--hud-font": (_FONT
                "--emoji-font": (_FONTS, "open"), "--enochian-font": (_FONTS, "open"), "--sigil-font": (_FONTS, "open"),
                "--sigil-image": ([("PNG", "*.png")], "many"), "--overlay": ([("PNG or video", "*.png *.mp4 *.mov *.avi *.mkv *.webm *.m4v")], "open"),
                "--bg-image": (_IMAGES, "open"), "--bg-replace": (_IMAGES, "open"), "--seg-model": ([("ONNX model", "*.onnx")], "open"),
-               "--yunet-model": ([("ONNX model", "*.onnx")], "open"), "--mask-video": ([("MP4 video", "*.mp4")], "save"),
+               "--yunet-model": ([("ONNX model", "*.onnx")], "open"), "--mask-video": ([("MP4 video", "*.mp4")], "save"), "--layout": ([("Layout", "*.json")], "open"),
                "INPUT": ([("Video or image", "*.mp4 *.mov *.avi *.mkv *.webm *.png *.jpg *.jpeg *.webp *.bmp")], "open"),
                "OUTPUT": ([("MP4 video", "*.mp4"), ("PNG image", "*.png")], "save")}
 

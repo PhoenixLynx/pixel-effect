@@ -1251,6 +1251,57 @@ def draw_comment(layer, x, y, user, msg, k, s, max_px=10 ** 6):
     put_text(layer, msg, (tx, y + int(20 * s)), FONT, 0.5 * s, HUD_WHITE, tk(0.5 * s, 1.0), cv2.LINE_AA)
 
 
+# ---- HUD layouts: every theme names its elements; a --layout file moves or hides them -----------------
+# Anchors are each element's reference point as fractions of the frame (x, y): the GUI's layout editor shows them,
+# and a move of (dx, dy) shifts everything belonging to that element together. No layout = all offsets zero.
+HUD_ELEMENTS = {
+    "eve": {"title": (0.04, 0.06), "badges": (0.96, 0.06), "brackets": (0.05, 0.15), "chat": (0.03, 0.54),
+            "input": (0.04, 0.905), "progress": (0.0, 0.885), "status": (0.04, 0.975), "hearts": (0.90, 0.80)},
+    "angelcore": {"tagline": (0.50, 0.035), "title": (0.07, 0.125), "filename": (0.07, 0.268), "vertical": (0.945, 0.62),
+                  "sigil_a": (0.945, 0.76), "sigil_b": (0.07, 0.50), "viewers": (0.64, 0.075), "chat": (0.04, 0.60),
+                  "input": (0.04, 0.88), "date": (0.04, 0.965), "timecode": (0.62, 0.965), "progress": (0.0, 0.94)},
+    "terminal": {"ticker": (0.0, 0.0), "panels": (0.70, 0.045), "feed": (0.50, 0.62), "chat": (0.02, 0.62),
+                 "hearts": (0.36, 0.855), "title": (0.02, 0.075), "input": (0.02, 0.895), "status": (0.02, 0.975),
+                 "progress": (0.0, 0.945)},
+}
+
+
+def load_layout(path):
+    """--layout file (JSON): {"move": {"chat": [dx, dy], ...}, "hide": ["status", ...]} with dx, dy as fractions of the
+    frame (0.1 = a tenth of the width/height). Sections per theme also work: {"angelcore": {"move": ..., "hide": ...}}."""
+    if not path:
+        return {}
+    import json
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"Could not read --layout {path}: {e}")
+    if not isinstance(data, dict):
+        raise SystemExit(f"--layout {path}: expected a JSON object with \"move\" and/or \"hide\"")
+    return data
+
+
+class Layout:
+    """Where this frame draws each element: off(name) = pixel offset (dx, dy); show(name) = not hidden."""
+
+    def __init__(self, theme, cfg, W, H):
+        data = cfg.get("layout") or {}
+        data = data.get(theme, data) if isinstance(data.get(theme), dict) else data
+        self.W, self.H = W, H
+        self.moves = {k: (float(v[0]), float(v[1])) for k, v in (data.get("move") or {}).items()}
+        self.hidden = set(data.get("hide") or [])
+
+    def off(self, name):
+        dx, dy = self.moves.get(name, (0.0, 0.0))
+        return int(round(dx * self.W)), int(round(dy * self.H))
+
+    def frac(self, name):
+        return self.moves.get(name, (0.0, 0.0))
+
+    def show(self, name):
+        return name not in self.hidden
+
+
 def draw_hud(frame, t, frac, fps, cfg):
     """Draw the overlay on a black layer, then screen-blend it so it never leaves dark halos."""
     H, W = frame.shape[:2]
@@ -1258,37 +1309,49 @@ def draw_hud(frame, t, frac, fps, cfg):
     th = max(1, int(round(s)))
     A = cv2.LINE_AA
     layer = np.zeros_like(frame)
+    L = Layout("eve", cfg, W, H)
     mx, my = int(0.04 * W), int(0.06 * H)
-    frame = darken_rect(frame, (0.03, 0.54, 0.72, 0.84), s)
+    if L.show("chat"):
+        fx, fy = L.frac("chat")
+        frame = darken_rect(frame, (0.03 + fx, 0.54 + fy, 0.72 + fx, 0.84 + fy), s)
 
     # title with underline (top left)
-    put_text(layer, cfg["title"], (mx, my + int(10 * s)), cv2.FONT_HERSHEY_DUPLEX, 0.9 * s, HUD_WHITE, tk(0.9 * s, 1.25), A)
-    cv2.line(layer, (mx, my + int((10 + 16 * TITLE_SCALE) * s)), (mx + int(0.32 * W), my + int((10 + 16 * TITLE_SCALE) * s)), HUD_CYAN, th, A)
+    if L.show("title"):
+        ox, oy = L.off("title")
+        put_text(layer, cfg["title"], (mx + ox, my + oy + int(10 * s)), cv2.FONT_HERSHEY_DUPLEX, 0.9 * s, HUD_WHITE, tk(0.9 * s, 1.25), A)
+        uy = my + oy + int((10 + 16 * TITLE_SCALE) * s)
+        cv2.line(layer, (mx + ox, uy), (mx + ox + int(0.32 * W), uy), HUD_CYAN, th, A)
 
     # corner brackets framing the picture
-    bx0, by0, bx1, by1 = int(0.05 * W), int(0.15 * H), int(0.95 * W), int(0.86 * H)
-    L = int(28 * s)
-    for (x, y, dx, dy) in [(bx0, by0, 1, 1), (bx1, by0, -1, 1), (bx0, by1, 1, -1), (bx1, by1, -1, -1)]:
-        cv2.line(layer, (x, y), (x + dx * L, y), HUD_GRAY, th + 1, A)
-        cv2.line(layer, (x, y), (x, y + dy * L), HUD_GRAY, th + 1, A)
+    if L.show("brackets"):
+        ox, oy = L.off("brackets")
+        bx0, by0, bx1, by1 = int(0.05 * W) + ox, int(0.15 * H) + oy, int(0.95 * W) + ox, int(0.86 * H) + oy
+        Lb = int(28 * s)
+        for (x, y, dx, dy) in [(bx0, by0, 1, 1), (bx1, by0, -1, 1), (bx0, by1, 1, -1), (bx1, by1, -1, -1)]:
+            cv2.line(layer, (x, y), (x + dx * Lb, y), HUD_GRAY, th + 1, A)
+            cv2.line(layer, (x, y), (x, y + dy * Lb), HUD_GRAY, th + 1, A)
 
     # LIVE badge and viewer count (top right)
-    pill_h = int(30 * s)
-    viewers = f"{(1200 + 250 * t) / 1000:.1f}k"
-    vw = text_size(viewers, 0.55 * s, th)[0] + int(34 * s)
-    lw = text_size("LIVE", 0.55 * s, th + 1)[0] + int(46 * s)
-    x2 = W - mx
-    rounded_rect(layer, (x2 - vw, my - int(8 * s)), (x2, my - int(8 * s) + pill_h), pill_h // 2, HUD_CYAN, th + 1)
-    put_text(layer, viewers, (x2 - vw + int(17 * s), my + int(13 * s)), FONT, 0.55 * s, HUD_WHITE, tk(0.55 * s, 1.0), A)
-    x1 = x2 - vw - int(12 * s) - lw
-    rounded_rect(layer, (x1, my - int(8 * s)), (x1 + lw, my - int(8 * s) + pill_h), pill_h // 2, HUD_PINK, th + 1)
-    if int(t * 2) % 2 == 0:                                   # blinking dot
-        cv2.circle(layer, (x1 + int(18 * s), my + int(7 * s)), int(5 * s), HUD_PINK, -1, A)
-    put_text(layer, "LIVE", (x1 + int(30 * s), my + int(13 * s)), FONT, 0.55 * s, HUD_WHITE, tk(0.55 * s, 1.25), A)
+    if L.show("badges"):
+        ox, oy = L.off("badges")
+        by = my + oy
+        pill_h = int(30 * s)
+        viewers = f"{(1200 + 250 * t) / 1000:.1f}k"
+        vw = text_size(viewers, 0.55 * s, th)[0] + int(34 * s)
+        lw = text_size("LIVE", 0.55 * s, th + 1)[0] + int(46 * s)
+        x2 = W - mx + ox
+        rounded_rect(layer, (x2 - vw, by - int(8 * s)), (x2, by - int(8 * s) + pill_h), pill_h // 2, HUD_CYAN, th + 1)
+        put_text(layer, viewers, (x2 - vw + int(17 * s), by + int(13 * s)), FONT, 0.55 * s, HUD_WHITE, tk(0.55 * s, 1.0), A)
+        x1 = x2 - vw - int(12 * s) - lw
+        rounded_rect(layer, (x1, by - int(8 * s)), (x1 + lw, by - int(8 * s) + pill_h), pill_h // 2, HUD_PINK, th + 1)
+        if int(t * 2) % 2 == 0:                                   # blinking dot
+            cv2.circle(layer, (x1 + int(18 * s), by + int(7 * s)), int(5 * s), HUD_PINK, -1, A)
+        put_text(layer, "LIVE", (x1 + int(30 * s), by + int(13 * s)), FONT, 0.55 * s, HUD_WHITE, tk(0.55 * s, 1.25), A)
 
     # scrolling comment feed (bottom left): a new one every 1.6 s, each lives about 6.4 s
-    comments, interval, life = cfg["comments"], 1.6, 6.4
-    base_y, line_h = int(0.80 * H), int(58 * s)
+    comments, interval, life = (cfg["comments"] if L.show("chat") else []), 1.6, 6.4
+    ox, oy = L.off("chat")
+    base_y, line_h = int(0.80 * H) + oy, int(58 * s)
     first = max(0, int((t - life) // interval) + 1)
     for k in range(first, int(t // interval) + 1) if comments else ():   # empty with --no-chat
         age = t - k * interval
@@ -1299,36 +1362,43 @@ def draw_hud(frame, t, frac, fps, cfg):
         y = base_y - int(slot * line_h)
         tmp = np.zeros_like(frame)
         user, msg = comments[k % len(comments)]
-        draw_comment(tmp, mx + int(8 * s), y, user, msg, k, s, max_px=int(0.70 * W) - mx)
+        draw_comment(tmp, mx + ox + int(8 * s), y, user, msg, k, s, max_px=int(0.70 * W) - mx)
         layer = cv2.add(layer, cv2.convertScaleAbs(tmp, alpha=alpha))
 
     # message box with smiley, send arrow and heart (bottom)
-    by_top, by_bot = int(0.905 * H), int(0.905 * H) + int(44 * s)
-    rounded_rect(layer, (mx, by_top), (W - int(0.15 * W), by_bot), int(22 * s), HUD_CYAN, th + 1)
-    sx, sy, sr = mx + int(26 * s), (by_top + by_bot) // 2, int(11 * s)
-    cv2.circle(layer, (sx, sy), sr, HUD_WHITE, th, A)
-    for dx in (-0.35, 0.35):
-        cv2.circle(layer, (sx + int(dx * sr), sy - int(0.25 * sr)), max(1, int(1.2 * s)), HUD_WHITE, -1, A)
-    cv2.ellipse(layer, (sx, sy + int(0.1 * sr)), (int(0.55 * sr), int(0.45 * sr)), 0, 20, 160, HUD_WHITE, th, A)
-    put_text(layer, cfg["prompt"], (sx + int(26 * s), sy + int(4 * s)), FONT, 0.4 * s, HUD_CYAN, tk(0.4 * s, 1.0), A)
-    px, py, ps = W - int(0.12 * W), sy, int(18 * s)
-    plane = np.array([(0, -0.5), (1, 0), (0, 0.5), (0.3, 0)]) * ps + (px, py)
-    cv2.polylines(layer, [plane.astype(np.int32)], True, HUD_WHITE, th + 1, A)
-    draw_heart(layer, W - int(0.05 * W), py, int(30 * s), HUD_PINK, th + 1)
+    if L.show("input"):
+        ox, oy = L.off("input")
+        by_top, by_bot = int(0.905 * H) + oy, int(0.905 * H) + oy + int(44 * s)
+        rounded_rect(layer, (mx + ox, by_top), (W - int(0.15 * W) + ox, by_bot), int(22 * s), HUD_CYAN, th + 1)
+        sx, sy, sr = mx + ox + int(26 * s), (by_top + by_bot) // 2, int(11 * s)
+        cv2.circle(layer, (sx, sy), sr, HUD_WHITE, th, A)
+        for dx in (-0.35, 0.35):
+            cv2.circle(layer, (sx + int(dx * sr), sy - int(0.25 * sr)), max(1, int(1.2 * s)), HUD_WHITE, -1, A)
+        cv2.ellipse(layer, (sx, sy + int(0.1 * sr)), (int(0.55 * sr), int(0.45 * sr)), 0, 20, 160, HUD_WHITE, th, A)
+        put_text(layer, cfg["prompt"], (sx + int(26 * s), sy + int(4 * s)), FONT, 0.4 * s, HUD_CYAN, tk(0.4 * s, 1.0), A)
+        px, py, ps = W - int(0.12 * W) + ox, sy, int(18 * s)
+        plane = np.array([(0, -0.5), (1, 0), (0, 0.5), (0.3, 0)]) * ps + (px, py)
+        cv2.polylines(layer, [plane.astype(np.int32)], True, HUD_WHITE, th + 1, A)
+        draw_heart(layer, W - int(0.05 * W) + ox, py, int(30 * s), HUD_PINK, th + 1)
 
     # progress bar along the very bottom
-    barY = int(0.885 * H)
-    cv2.line(layer, (0, barY), (W, barY), HUD_GRAY, max(1, th), A)
-    cv2.line(layer, (0, barY), (int(W * frac), barY), HUD_RED, th + 2, A)
-    cv2.circle(layer, (int(W * frac), barY), int(6 * s), HUD_RED, -1, A)
+    if L.show("progress"):
+        ox, oy = L.off("progress")
+        barY = int(0.885 * H) + oy
+        cv2.line(layer, (0 + ox, barY), (W + ox, barY), HUD_GRAY, max(1, th), A)
+        cv2.line(layer, (0 + ox, barY), (int(W * frac) + ox, barY), HUD_RED, th + 2, A)
+        cv2.circle(layer, (int(W * frac) + ox, barY), int(6 * s), HUD_RED, -1, A)
 
     # status line (bottom left): the fps is real, the rest is decoration
-    signal = 96 + int(3 * abs(math.sin(t * 1.7)))
-    put_text(layer, f"NET//STABLE   {fps:.0f}FPS   SIGNAL {signal}%", (mx, int(0.975 * H)),
-                FONT, 0.38 * s, HUD_CYAN, tk(0.38 * s, 1.0), A)
+    if L.show("status"):
+        ox, oy = L.off("status")
+        signal = 96 + int(3 * abs(math.sin(t * 1.7)))
+        put_text(layer, f"NET//STABLE   {fps:.0f}FPS   SIGNAL {signal}%", (mx + ox, int(0.975 * H) + oy),
+                    FONT, 0.38 * s, HUD_CYAN, tk(0.38 * s, 1.0), A)
 
     # floating hearts (right edge), each rising and fading over 2.6 s
-    for k in range(int(t / 0.35) - 8, int(t / 0.35) + 1):
+    ox, oy = L.off("hearts")
+    for k in range(int(t / 0.35) - 8, int(t / 0.35) + 1) if L.show("hearts") else ():
         if k < 0:
             continue
         rng = np.random.default_rng(k)
@@ -1336,8 +1406,8 @@ def draw_hud(frame, t, frac, fps, cfg):
         if not (0 <= age <= 2.6):
             continue
         a = min(1.0, age / 0.3) * min(1.0, (2.6 - age) / 0.8)
-        x = int(W * (0.90 + 0.06 * rng.random()))
-        y = int(H * 0.80 - age / 2.6 * H * 0.4)
+        x = int(W * (0.90 + 0.06 * rng.random())) + ox
+        y = int(H * 0.80 - age / 2.6 * H * 0.4) + oy
         tmp = np.zeros_like(frame)
         size = int((16 + 14 * rng.random()) * s)
         if rng.random() > 0.5:
@@ -1521,45 +1591,56 @@ def draw_hud_angelcore(frame, t, frac, fps, cfg):
     th = max(1, int(round(s)))
     A = cv2.LINE_AA
     layer = np.zeros_like(frame)
-    P = lambda key, i=0: (int(ANGEL_SLOTS[key][i] * W), int(ANGEL_SLOTS[key][i + 1] * H))
-    frame = darken_rect(frame, ANGEL_SLOTS["chat"], s)
+    L = Layout("angelcore", cfg, W, H)
+    P = lambda key, i=0: (int((ANGEL_SLOTS[key][i] + L.frac(key)[0]) * W), int((ANGEL_SLOTS[key][i + 1] + L.frac(key)[1]) * H))
+    if L.show("chat"):
+        fx, fy = L.frac("chat")
+        c = ANGEL_SLOTS["chat"]
+        frame = darken_rect(frame, (c[0] + fx, c[1] + fy, c[2] + fx, c[3] + fy), s)
 
     # tagline, title (two lines, the second pushed right), filename tag
-    tag = cfg.get("tagline", "SERVE / PROTECT / SILENT")
-    tw = sum(hud_text_size(c, FONT, 0.5 * s, th)[0][0] + 5 * s for c in tag)
-    spaced_text(layer, tag, (P("tagline")[0] - tw / 2, P("tagline")[1]), 0.5 * s, ANGEL_WHITE, tk(0.5 * s, 1.0), 5 * s)
-    words = cfg["title"].split()
-    lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
-    tx, ty = P("title")
-    for i, line in enumerate(l for l in lines if l):
-        put_text(layer, line, (tx + i * int(0.2 * W), ty + i * int(56 * s * TITLE_SCALE)), cv2.FONT_HERSHEY_COMPLEX, 1.7 * s, ANGEL_WHITE, tk(1.7 * s, 1.5), A)
-    fx, fy = P("filename")
-    cv2.rectangle(layer, (fx, fy - int(20 * s)), (fx + int(26 * s), fy + int(6 * s)), ANGEL_WHITE, th, A)
-    cv2.line(layer, (fx + int(7 * s), fy - int(13 * s)), (fx + int(19 * s), fy), ANGEL_WHITE, th, A)
-    spaced_text(layer, cfg.get("tag", "ASCENSION.exe"), (fx + int(40 * s), fy), 0.8 * s, ANGEL_WHITE, tk(0.8 * s, 1.0), 1 * s)
+    if L.show("tagline"):
+        tag = cfg.get("tagline", "SERVE / PROTECT / SILENT")
+        tw = sum(hud_text_size(c, FONT, 0.5 * s, th)[0][0] + 5 * s for c in tag)
+        spaced_text(layer, tag, (P("tagline")[0] - tw / 2, P("tagline")[1]), 0.5 * s, ANGEL_WHITE, tk(0.5 * s, 1.0), 5 * s)
+    if L.show("title"):
+        words = cfg["title"].split()
+        lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
+        tx, ty = P("title")
+        for i, line in enumerate(l for l in lines if l):
+            put_text(layer, line, (tx + i * int(0.2 * W), ty + i * int(56 * s * TITLE_SCALE)), cv2.FONT_HERSHEY_COMPLEX, 1.7 * s, ANGEL_WHITE, tk(1.7 * s, 1.5), A)
+    if L.show("filename"):
+        fx, fy = P("filename")
+        cv2.rectangle(layer, (fx, fy - int(20 * s)), (fx + int(26 * s), fy + int(6 * s)), ANGEL_WHITE, th, A)
+        cv2.line(layer, (fx + int(7 * s), fy - int(13 * s)), (fx + int(19 * s), fy), ANGEL_WHITE, th, A)
+        spaced_text(layer, cfg.get("tag", "ASCENSION.exe"), (fx + int(40 * s), fy), 0.8 * s, ANGEL_WHITE, tk(0.8 * s, 1.0), 1 * s)
 
     # vertical text on the right edge, and sigils
-    vx, vy = P("vertical")
-    vertical_text(layer, cfg.get("vertical", "SYSTEM ANGEL // ONLINE"), vx, vy, 0.62 * s, ANGEL_WHITE, tk(0.62 * s, 1.0), 7 * s)
+    if L.show("vertical"):
+        vx, vy = P("vertical")
+        vertical_text(layer, cfg.get("vertical", "SYSTEM ANGEL // ONLINE"), vx, vy, 0.62 * s, ANGEL_WHITE, tk(0.62 * s, 1.0), 7 * s)
     if cfg.get("sigils", True):
-        for (sx, sy, ssz), seed_, col in ((ANGEL_SLOTS["sigil_a"], 3, ANGEL_WHITE), (ANGEL_SLOTS["sigil_b"], 11, ANGEL_DIM)):
-            draw_sigil(layer, int(sx * W), int(sy * H), ssz * s, col, th, seed_, t)
+        for key, seed_, col in (("sigil_a", 3, ANGEL_WHITE), ("sigil_b", 11, ANGEL_DIM)):
+            if L.show(key):
+                sx, sy, ssz = ANGEL_SLOTS[key]
+                draw_sigil(layer, int((sx + L.frac(key)[0]) * W), int((sy + L.frac(key)[1]) * H), ssz * s, col, th, seed_, t)
 
     # viewers (top right)
-    vxp, vyp = P("viewers")
-    spaced_text(layer, f"{(1200 + 250 * t) / 1000:.1f}K WATCHING", (vxp, vyp), 0.45 * s, ANGEL_WHITE, tk(0.45 * s, 1.0), 3 * s)
-    cv2.circle(layer, (vxp - int(14 * s), vyp - int(5 * s)), int(4 * s), ANGEL_RED, -1, A)
+    if L.show("viewers"):
+        vxp, vyp = P("viewers")
+        spaced_text(layer, f"{(1200 + 250 * t) / 1000:.1f}K WATCHING", (vxp, vyp), 0.45 * s, ANGEL_WHITE, tk(0.45 * s, 1.0), 3 * s)
+        cv2.circle(layer, (vxp - int(14 * s), vyp - int(5 * s)), int(4 * s), ANGEL_RED, -1, A)
 
     # chat window: thin frame with notched corners, header, fading messages
     cx0, cy0 = P("chat", 0)
     cx1, cy1 = P("chat", 2)
     n = int(14 * s)
     pts = [(cx0 + n, cy0), (cx1, cy0), (cx1, cy1 - n), (cx1 - n, cy1), (cx0, cy1), (cx0, cy0 + n)]
-    if cfg.get("chat", True):                                 # frame and header hidden with --no-chat
+    if cfg.get("chat", True) and L.show("chat"):              # frame and header hidden with --no-chat
         cv2.polylines(layer, [np.array(pts, np.int32)], True, ANGEL_WHITE, th, A)
         spaced_text(layer, "// CHAT_LINK", (cx0 + int(16 * s), cy0 + int(24 * s)), 0.42 * s, ANGEL_DIM, tk(0.42 * s, 1.0), 3 * s)
     line_h = int(46 * s)
-    for k, user, msg, alpha, slot in visible_comments(t, cfg["comments"]):
+    for k, user, msg, alpha, slot in visible_comments(t, cfg["comments"] if L.show("chat") else []):
         y = cy1 - int(24 * s) - slot * line_h
         if y < cy0 + int(46 * s):
             continue
@@ -1574,20 +1655,25 @@ def draw_hud_angelcore(frame, t, frac, fps, cfg):
         layer = cv2.add(layer, cv2.convertScaleAbs(tmp, alpha=alpha))
 
     # input line with blinking cursor, date, timecode
-    ix0, iy = P("input", 0)
-    ix1 = P("input", 2)[0]
-    cv2.line(layer, (ix0, iy + int(34 * s)), (ix1, iy + int(34 * s)), ANGEL_WHITE, th, A)
-    end = spaced_text(layer, cfg["prompt"].replace("...", ""), (ix0 + int(6 * s), iy + int(22 * s)), 0.45 * s, ANGEL_DIM, tk(0.45 * s, 1.0), 3 * s)
-    if int(t * 2) % 2 == 0:
-        cv2.rectangle(layer, (int(end) + int(4 * s), iy + int(8 * s)), (int(end) + int(11 * s), iy + int(26 * s)), ANGEL_WHITE, -1)
-    if cfg.get("hearts", True):
-        draw_heart(layer, ix1 + int(34 * s), iy + int(20 * s), int(26 * s), ANGEL_RED, max(1, th))
-        floating_hearts(layer, t, s, th, ix1 + int(8 * s), ix1 + int(0.07 * W), int(0.855 * H), int(0.33 * H), [ANGEL_RED, ANGEL_WHITE])
-    spaced_text(layer, cfg.get("date", time.strftime("%d/%m/%Y")), P("date"), 0.5 * s, ANGEL_WHITE, tk(0.5 * s, 1.0), 2 * s)
-    spaced_text(layer, timecode(t, fps), P("timecode"), 0.55 * s, ANGEL_WHITE, tk(0.55 * s, 1.0), 2 * s)
-    barY = int(0.94 * H)
-    cv2.line(layer, (0, barY), (W, barY), ANGEL_DIM, 1, A)
-    cv2.line(layer, (0, barY), (int(W * frac), barY), ANGEL_WHITE, th + 1, A)
+    if L.show("input"):
+        ix0, iy = P("input", 0)
+        ix1 = P("input", 2)[0]
+        cv2.line(layer, (ix0, iy + int(34 * s)), (ix1, iy + int(34 * s)), ANGEL_WHITE, th, A)
+        end = spaced_text(layer, cfg["prompt"].replace("...", ""), (ix0 + int(6 * s), iy + int(22 * s)), 0.45 * s, ANGEL_DIM, tk(0.45 * s, 1.0), 3 * s)
+        if int(t * 2) % 2 == 0:
+            cv2.rectangle(layer, (int(end) + int(4 * s), iy + int(8 * s)), (int(end) + int(11 * s), iy + int(26 * s)), ANGEL_WHITE, -1)
+        if cfg.get("hearts", True):
+            draw_heart(layer, ix1 + int(34 * s), iy + int(20 * s), int(26 * s), ANGEL_RED, max(1, th))
+            floating_hearts(layer, t, s, th, ix1 + int(8 * s), ix1 + int(0.07 * W), int(0.855 * H) + L.off("input")[1], int(0.33 * H), [ANGEL_RED, ANGEL_WHITE])
+    if L.show("date"):
+        spaced_text(layer, cfg.get("date", time.strftime("%d/%m/%Y")), P("date"), 0.5 * s, ANGEL_WHITE, tk(0.5 * s, 1.0), 2 * s)
+    if L.show("timecode"):
+        spaced_text(layer, timecode(t, fps), P("timecode"), 0.55 * s, ANGEL_WHITE, tk(0.55 * s, 1.0), 2 * s)
+    if L.show("progress"):
+        ox, oy = L.off("progress")
+        barY = int(0.94 * H) + oy
+        cv2.line(layer, (0 + ox, barY), (W + ox, barY), ANGEL_DIM, 1, A)
+        cv2.line(layer, (0 + ox, barY), (int(W * frac) + ox, barY), ANGEL_WHITE, th + 1, A)
 
     glitch_bars(layer, W, H, t, ANGEL_DIM)
     if cfg.get("lockon", True):
@@ -1633,22 +1719,32 @@ def draw_hud_terminal(frame, t, frac, fps, cfg):
     th = max(1, int(round(s)))
     A = cv2.LINE_AA
     layer = np.zeros_like(frame)
-    R = lambda a, b, c, d: (int(a * W), int(b * H), int(c * W), int(d * H))
-    frame = darken_rect(frame, (0.02, 0.62, 0.48, 0.86), s)
-    scrolling_panel(layer, R(0.0, 0.0, 1.0, 0.026), t, s, th, 1, speed=0, lines_rate=0)       # ticker frame
-    tick = " ".join(fake_code_line(np.random.default_rng(i)) for i in range(40))
-    off = int(t * 120 * s) % (len(tick) * int(6 * s))
-    put_text(layer, tick[off // int(6 * s):off // int(6 * s) + 220], (6, int(0.018 * H)), FONT, 0.34 * s, TERM_TEXT[0], tk(0.34 * s, 0.8), A)
-    for i, (y0, y1) in enumerate(((0.045, 0.20), (0.215, 0.37), (0.385, 0.54))):
-        scrolling_panel(layer, R(0.70, y0, 0.985, y1), t, s, th, 10 + i, speed=4 + 2 * i)
-    scrolling_panel(layer, R(0.50, 0.62, 0.985, 0.86), t, s, th, 20, speed=7)
+    L = Layout("terminal", cfg, W, H)
+
+    def R(name, a, b, c, d):                                   # a rectangle of element `name`, moved by its layout offset
+        fx, fy = L.frac(name)
+        return (int((a + fx) * W), int((b + fy) * H), int((c + fx) * W), int((d + fy) * H))
+
+    if L.show("chat"):
+        fx, fy = L.frac("chat")
+        frame = darken_rect(frame, (0.02 + fx, 0.62 + fy, 0.48 + fx, 0.86 + fy), s)
+    if L.show("ticker"):
+        ox, oy = L.off("ticker")
+        scrolling_panel(layer, R("ticker", 0.0, 0.0, 1.0, 0.026), t, s, th, 1, speed=0, lines_rate=0)       # ticker frame
+        tick = " ".join(fake_code_line(np.random.default_rng(i)) for i in range(40))
+        off = int(t * 120 * s) % (len(tick) * int(6 * s))
+        put_text(layer, tick[off // int(6 * s):off // int(6 * s) + 220], (6 + ox, int(0.018 * H) + oy), FONT, 0.34 * s, TERM_TEXT[0], tk(0.34 * s, 0.8), A)
+    for i, (y0, y1) in enumerate(((0.045, 0.20), (0.215, 0.37), (0.385, 0.54)) if L.show("panels") else ()):
+        scrolling_panel(layer, R("panels", 0.70, y0, 0.985, y1), t, s, th, 10 + i, speed=4 + 2 * i)
+    if L.show("feed"):
+        scrolling_panel(layer, R("feed", 0.50, 0.62, 0.985, 0.86), t, s, th, 20, speed=7)
 
     # chat panel (bottom left)
-    cx0, cy0, cx1, cy1 = R(0.02, 0.62, 0.48, 0.86)
-    if cfg.get("chat", True):                                 # frame and header hidden with --no-chat
+    cx0, cy0, cx1, cy1 = R("chat", 0.02, 0.62, 0.48, 0.86)
+    if cfg.get("chat", True) and L.show("chat"):              # frame and header hidden with --no-chat
         cv2.rectangle(layer, (cx0, cy0), (cx1, cy1), TERM_ORANGE, th, A)
         put_text(layer, "CHAT_LINK // LIVE", (cx0 + int(10 * s), cy0 + int(20 * s)), FONT, 0.42 * s, TERM_TEXT[0], tk(0.42 * s, 1.0), A)
-    for k, user, msg, alpha, slot in visible_comments(t, cfg["comments"]):
+    for k, user, msg, alpha, slot in visible_comments(t, cfg["comments"] if L.show("chat") else []):
         y = cy1 - int(18 * s) - slot * int(40 * s)
         if y < cy0 + int(40 * s):
             continue
@@ -1658,19 +1754,28 @@ def draw_hud_terminal(frame, t, frac, fps, cfg):
         put_text(tmp, msg, (cx0 + int(10 * s), y + int(17 * s)), FONT, 0.42 * s, TERM_TEXT[2], tk(0.42 * s, 1.0), A)
         layer = cv2.add(layer, cv2.convertScaleAbs(tmp, alpha=alpha))
 
-    if cfg.get("hearts", True):
-        floating_hearts(layer, t, s, th, int(0.36 * W), int(0.47 * W), int(0.855 * H), int(0.22 * H), [TERM_ORANGE, TERM_TEXT[2]])
+    if cfg.get("hearts", True) and L.show("hearts"):
+        ox, oy = L.off("hearts")
+        floating_hearts(layer, t, s, th, int(0.36 * W) + ox, int(0.47 * W) + ox, int(0.855 * H) + oy, int(0.22 * H), [TERM_ORANGE, TERM_TEXT[2]])
     # title, input line, status, progress
-    put_text(layer, cfg["title"], (int(0.02 * W), int(0.075 * H)), cv2.FONT_HERSHEY_DUPLEX, 0.9 * s, TERM_TEXT[2], tk(0.9 * s, 1.25), A)
-    iy = int(0.895 * H)
-    cv2.rectangle(layer, (int(0.02 * W), iy), (int(0.70 * W), iy + int(34 * s)), TERM_ORANGE, th, A)
-    cursor = "_" if int(t * 2) % 2 == 0 else " "
-    put_text(layer, f"> {cfg['prompt']}{cursor}", (int(0.03 * W), iy + int(23 * s)), FONT, 0.46 * s, TERM_TEXT[0], tk(0.46 * s, 1.0), A)
-    put_text(layer, f"{timecode(t, fps)}   {fps:.0f}FPS   SIGNAL {96 + int(3 * abs(math.sin(t * 1.7)))}%",
-                (int(0.02 * W), int(0.975 * H)), FONT, 0.4 * s, TERM_TEXT[0], tk(0.4 * s, 1.0), A)
-    barY = int(0.945 * H)
-    cv2.line(layer, (0, barY), (W, barY), TERM_ORANGE, 1, A)
-    cv2.line(layer, (0, barY), (int(W * frac), barY), TERM_TEXT[2], th + 1, A)
+    if L.show("title"):
+        ox, oy = L.off("title")
+        put_text(layer, cfg["title"], (int(0.02 * W) + ox, int(0.075 * H) + oy), cv2.FONT_HERSHEY_DUPLEX, 0.9 * s, TERM_TEXT[2], tk(0.9 * s, 1.25), A)
+    if L.show("input"):
+        ox, oy = L.off("input")
+        iy = int(0.895 * H) + oy
+        cv2.rectangle(layer, (int(0.02 * W) + ox, iy), (int(0.70 * W) + ox, iy + int(34 * s)), TERM_ORANGE, th, A)
+        cursor = "_" if int(t * 2) % 2 == 0 else " "
+        put_text(layer, f"> {cfg['prompt']}{cursor}", (int(0.03 * W) + ox, iy + int(23 * s)), FONT, 0.46 * s, TERM_TEXT[0], tk(0.46 * s, 1.0), A)
+    if L.show("status"):
+        ox, oy = L.off("status")
+        put_text(layer, f"{timecode(t, fps)}   {fps:.0f}FPS   SIGNAL {96 + int(3 * abs(math.sin(t * 1.7)))}%",
+                    (int(0.02 * W) + ox, int(0.975 * H) + oy), FONT, 0.4 * s, TERM_TEXT[0], tk(0.4 * s, 1.0), A)
+    if L.show("progress"):
+        ox, oy = L.off("progress")
+        barY = int(0.945 * H) + oy
+        cv2.line(layer, (0 + ox, barY), (W + ox, barY), TERM_ORANGE, 1, A)
+        cv2.line(layer, (0 + ox, barY), (int(W * frac) + ox, barY), TERM_TEXT[2], th + 1, A)
     if cfg.get("lockon", True):
         lock = np.zeros_like(frame)
         lock_on_boxes(lock, cfg.get("boxes", []), s, t, TERM_ORANGE, th, cfg.get("body_box"))
@@ -2181,6 +2286,7 @@ def build_parser():
     ap.add_argument("--hud", action=argparse.BooleanOptionalAction, default=None,
                     help="live-stream style overlay (on by default with --style eve; --no-hud turns it off)")
     ap.add_argument("--hud-title", default="LIVE STREAM", help="title text at the top left of the HUD")
+    ap.add_argument("--layout", default="", help="a layout file (JSON) that moves or hides HUD elements, e.g. {\"move\": {\"chat\": [0, -0.1]}, \"hide\": [\"status\"]}; the GUI can make one")
     ap.add_argument("--comments", default="", help="text file of 'username: message' lines for the comment feed")
     ap.add_argument("--no-chat", dest="chat", action="store_false", help="hide the scrolling comment feed and its backdrop; the rest of the HUD stays")
     ap.add_argument("--hud-time", type=float, default=6.0, help="(still images) which second of the HUD animation to show")
@@ -2275,7 +2381,7 @@ def setup(args):
             "glyphs": glyph_styles}
     if args.hud is None:
         args.hud = args.style == "eve" or args.theme != "eve"
-    hud_cfg = {"title": clean_text(args.hud_title), "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "prompt": "TRANSMIT MESSAGE...",
+    hud_cfg = {"title": clean_text(args.hud_title), "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "layout": load_layout(args.layout), "prompt": "TRANSMIT MESSAGE...",
                "tag": clean_text(args.hud_tag), "tagline": clean_text(args.hud_tagline), "vertical": clean_text(args.hud_vertical), "boxes": [], "lockon": args.lockon, "sigils": args.sigils, "hearts": args.hearts}
     hud_fn = HUD_THEMES[args.theme] or draw_hud
     irid_kw = dict(strength=args.irid_strength, palette=args.irid_palette, glitch=args.irid_glitch,

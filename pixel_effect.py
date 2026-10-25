@@ -94,6 +94,15 @@ LOOKS = {
     "thermal-iron": dict(_look([(0, (8, 0, 30)), (60, (70, 0, 120)), (120, (190, 30, 120)), (170, (245, 100, 25)),
                                 (220, (255, 200, 50)), (255, (255, 255, 225))],
                                strength=1.0, chroma=0, bloom=0.1), normalize=True, blur=1.6, heat_people=True),
+    # graphic looks (pair with military, scifi, y2k)
+    "tactical": _look([(0, (6, 9, 6)), (128, (112, 122, 110)), (255, (236, 242, 230))], strength=0.35, saturation=0.45,
+                      chroma=0, bloom=0.1),
+    "chrome": _look([(0, (4, 5, 8)), (70, (48, 54, 64)), (150, (150, 158, 170)), (215, (215, 222, 232)), (255, (255, 255, 255))],
+                    strength=1.0, chroma=1, bloom=0.3),
+    "lilac": _look([(0, (16, 6, 26)), (90, (92, 60, 130)), (170, (190, 160, 225)), (255, (248, 240, 255))],
+                   strength=0.95, chroma=1, bloom=0.25),
+    "acid": _look([(0, (10, 10, 10)), (128, (120, 120, 118)), (255, (240, 240, 236))], strength=1.0, saturation=0.0,
+                  chroma=1, bloom=0.15),
 }
 
 
@@ -1296,6 +1305,12 @@ HUD_ELEMENTS = {
     "vhs": {"play": (0.07, 0.07), "counter": (0.93, 0.07), "date": (0.07, 0.90), "title": (0.50, 0.45)},
     "thermal": {"readout": (0.05, 0.05), "spots": (0.05, 0.16), "crosshair": (0.50, 0.50), "brand": (0.90, 0.07),
                 "scale": (0.50, 0.95)},
+    "military": {"heading": (0.50, 0.08), "speed": (0.10, 0.50), "altitude": (0.90, 0.50), "ladder": (0.50, 0.50),
+                 "target": (0.50, 0.40), "status": (0.06, 0.17), "readouts": (0.06, 0.78)},
+    "scifi": {"frame": (0.04, 0.05), "header": (0.05, 0.04), "ruler": (0.50, 0.13), "rings": (0.50, 0.35),
+              "gauges_left": (0.06, 0.30), "gauges_right": (0.94, 0.30), "chips": (0.06, 0.72), "readouts": (0.36, 0.82)},
+    "y2k": {"bar": (0.045, 0.14), "segments": (0.20, 0.12), "burst": (0.84, 0.12), "dots": (0.56, 0.075),
+            "rules": (0.20, 0.16), "crosses": (0.55, 0.63), "icon": (0.12, 0.90), "word": (0.95, 0.95)},
 }
 
 
@@ -1902,9 +1917,10 @@ def load_overlay(path, W, H, start=0.0, key="", tolerance=60):
 # ---- Camera themes: security, vhs, thermal --------------------------------------------------------
 # These draw like real camera displays: solid text with a dark shadow straight onto the picture (no glow).
 # Sizes follow the frame's shorter side, so they fit tall phone video as well as wide video.
-THEME_LABELS = {"security": "CAM 1", "vhs": "", "thermal": "IR-7"}         # used when --hud-title is left at its default
+THEME_LABELS = {"security": "CAM 1", "vhs": "", "thermal": "IR-7", "military": "IN LAR", "scifi": "BIOMETRIC SCAN", "y2k": "storm"}         # used when --hud-title is left at its default
 THEME_FONTS = {"security": ["Consolas", "Lucida Console"], "vhs": ["VCR OSD Mono", "Consolas"],
-               "thermal": ["Bahnschrift", "Segoe UI"]}                       # used when --hud-font is not set
+               "thermal": ["Bahnschrift", "Segoe UI"], "military": ["Consolas", "Lucida Console"],
+               "scifi": ["Bahnschrift", "Segoe UI"], "y2k": ["Segoe UI Semibold", "Segoe UI Bold", "Arial Bold"]}                       # used when --hud-font is not set
 THERMAL = {"gray": None, "stops": None}                                      # the last thermal look's heat map, for the HUD
 THERMAL_RANGE = (8.0, 37.0)                                                  # degrees C at the cold and hot ends of the scale
 
@@ -1930,7 +1946,8 @@ def shadow_text(img, txt, org, scale, color, thick, shadow=(0, 0, 0)):
     put_text(patch, txt, (org[0] - left, org[1] - top), FONT, scale, (255, 255, 255), thick, cv2.LINE_AA)
     m = patch[..., 0].astype(np.float32) / 255.0
     sh = np.roll(np.roll(cv2.dilate(m, np.ones((3, 3), np.uint8)), o, axis=0), o, axis=1)
-    sh = np.clip(cv2.GaussianBlur(sh, (0, 0), max(0.8, 1.2 * scale)) * 1.3, 0, 0.85)
+    sh = np.clip(cv2.GaussianBlur(sh, (0, 0), max(0.8, 1.2 * scale)) * 1.3, 0, 0.85) * (shadow is not None)
+    shadow = (0, 0, 0) if shadow is None else shadow
     H, W = img.shape[:2]
     x0, y0, x1, y1 = max(0, left), max(0, top), min(W, left + pw), min(H, top + ph)
     if x1 <= x0 or y1 <= y0:
@@ -2175,8 +2192,370 @@ def draw_hud_thermal(frame, t, frac, fps, cfg):
     return out
 
 
+# ---- Graphic themes: military, scifi, y2k -----------------------------------------------------------
+MIL_GREEN = (130, 255, 140)                       # BGR phosphor green
+SCI_CYAN = (232, 214, 100)                        # BGR cyan
+Y2K_ACID = (0, 255, 230)                          # BGR #e6ff00
+
+
+def glow_finish(frame, layer, sigma, amount):
+    """Glowing line-art HUD: the lines plus a soft halo, screen-blended so it never darkens the picture."""
+    glow = cv2.GaussianBlur(layer, (0, 0), sigma)
+    return screen_blend(frame, cv2.add(layer, cv2.convertScaleAbs(glow, alpha=amount)))
+
+
+def _rot(points, cx, cy, deg):
+    a = math.radians(deg)
+    ca, sa = math.cos(a), math.sin(a)
+    return [(int(cx + (x - cx) * ca - (y - cy) * sa), int(cy + (x - cx) * sa + (y - cy) * ca)) for x, y in points]
+
+
+def _centered(img, txt, cx, y, scale, color, thick):
+    put_text(img, txt, (int(cx - text_w(txt, scale, thick) / 2), int(y)), FONT, scale, color, thick, cv2.LINE_AA)
+
+
+def draw_hud_military(frame, t, frac, fps, cfg):
+    """Fighter-jet HUD in phosphor green: heading tape, speed and altitude tapes, a banking pitch ladder,
+    flight-path marker, target boxes on faces, flight readouts and a Zulu clock."""
+    H, W = frame.shape[:2]
+    s = _ui_scale(W, H)
+    th = max(1, int(round(1.3 * s)))
+    A = cv2.LINE_AA
+    layer = np.zeros_like(frame)
+    L = Layout("military", cfg, W, H)
+    G = cfg.get("hud_bgr") or MIL_GREEN
+    sc = 0.6 * s
+    heading = (347 + 12 * math.sin(t * 0.21) + 4 * math.sin(t * 0.9)) % 360
+    speed = 420 + 30 * math.sin(t * 0.3)
+    alt = 10000 + 400 * math.sin(t * 0.17) + 50 * math.sin(t * 1.3)
+    roll, pitch = 8 * math.sin(t * 0.5), 3 * math.sin(t * 0.37)
+    cx, cy = W // 2, H // 2
+
+    if L.show("heading"):                                        # heading tape across the top
+        ox, oy = L.off("heading")
+        hx, hy, span = cx + ox, int(0.08 * H) + oy, 0.6 * W
+        ppd = span / 40.0
+        for deg in range(int(heading) - 20, int(heading) + 22):
+            x = int(hx + (deg - heading) * ppd)
+            if abs(x - hx) > span / 2:
+                continue
+            if deg % 10 == 0:
+                cv2.line(layer, (x, hy), (x, hy + int(14 * s)), G, th, A)
+                _centered(layer, f"{(deg % 360) // 10:02d}", x, hy - int(6 * s), sc, G, tk(sc))
+            elif deg % 5 == 0:
+                cv2.line(layer, (x, hy), (x, hy + int(7 * s)), G, th, A)
+        tri = np.array([(hx, hy + int(18 * s)), (hx - int(7 * s), hy + int(30 * s)), (hx + int(7 * s), hy + int(30 * s))], np.int32)
+        cv2.polylines(layer, [tri], True, G, th, A)
+        _centered(layer, f"{int(round(heading)) % 360:03d}", hx, hy + int(54 * s), sc, G, tk(sc))
+
+    def tape(name, x, value, step, label_every, fmt, right):
+        ox, oy = L.off(name)
+        x += ox
+        y0, half = cy + oy, int(0.18 * H)
+        ppu = half / (step * 5.0)
+        base = int(value // step) * step
+        for k in range(-6, 7):
+            v = base + k * step
+            y = int(y0 - (v - value) * ppu)
+            if abs(y - y0) > half:
+                continue
+            d = -1 if right else 1
+            cv2.line(layer, (x, y), (x + d * int((14 if v % label_every == 0 else 7) * s), y), G, th, A)
+            if v % label_every == 0 and abs(y - y0) > int(18 * s):
+                txt = fmt(v)
+                tx = x + d * int(20 * s) - (text_w(txt, sc, tk(sc)) if right else 0)
+                put_text(layer, txt, (tx, y + int(6 * s)), FONT, sc, G, tk(sc), A)
+        cv2.line(layer, (x, y0 - half), (x, y0 + half), G, th, A)
+        txt = fmt(value)                                         # the current value in a box
+        bw, bh = text_w(txt, sc * 1.1, tk(sc)) + int(16 * s), int(28 * s)
+        bx = x + int(10 * s) if not right else x - int(10 * s) - bw
+        cv2.rectangle(layer, (bx, y0 - bh // 2), (bx + bw, y0 + bh // 2), G, th, A)
+        put_text(layer, txt, (bx + int(8 * s), y0 + int(7 * s)), FONT, sc * 1.1, G, tk(sc), A)
+
+    if L.show("speed"):
+        tape("speed", int(0.1 * W), speed, 10, 50, lambda v: f"{int(round(v))}", False)
+    if L.show("altitude"):
+        tape("altitude", int(0.9 * W), alt, 100, 500, lambda v: f"{int(round(v)):,}", True)
+
+    if L.show("ladder"):                                         # pitch ladder that banks with the roll
+        ox, oy = L.off("ladder")
+        pcx, pcy = cx + ox, cy + oy
+        ppd_v = 0.012 * H
+        for p in (-10, -5, 0, 5, 10):
+            y = pcy + (pitch - p) * ppd_v * 5 / 5
+            gap, seg = int(0.06 * W), int((0.16 if p == 0 else 0.08) * W)
+            for side in (-1, 1):
+                x_in, x_out = pcx + side * gap, pcx + side * (gap + seg)
+                if p < 0:                                        # below the horizon: dashed
+                    n = 4
+                    for i in range(n):
+                        a0 = x_in + (x_out - x_in) * i / n
+                        a1 = x_in + (x_out - x_in) * (i + 0.6) / n
+                        pts = _rot([(a0, y), (a1, y)], pcx, pcy, roll)
+                        cv2.line(layer, pts[0], pts[1], G, th, A)
+                else:
+                    pts = _rot([(x_in, y), (x_out, y)], pcx, pcy, roll)
+                    cv2.line(layer, pts[0], pts[1], G, th, A)
+                if p != 0:
+                    tick = _rot([(x_out, y), (x_out, y + (-1 if p > 0 else 1) * 8 * s)], pcx, pcy, roll)
+                    cv2.line(layer, tick[0], tick[1], G, th, A)
+                    lab = _rot([(x_out + side * 14 * s - (text_w(str(abs(p)), sc, tk(sc)) if side < 0 else 0), y + 6 * s)], pcx, pcy, roll)[0]
+                    put_text(layer, str(abs(p)), lab, FONT, sc, G, tk(sc), A)
+        r = int(9 * s)                                           # flight-path marker
+        fx, fy = pcx + int(3 * s * math.sin(t * 0.8)), pcy + int(4 * s * math.sin(t * 0.6))
+        cv2.circle(layer, (fx, fy), r, G, th, A)
+        for p0, p1 in (((fx - r, fy), (fx - 3 * r, fy)), ((fx + r, fy), (fx + 3 * r, fy)), ((fx, fy - r), (fx, fy - 2 * r))):
+            cv2.line(layer, p0, p1, G, th, A)
+
+    if L.show("target"):                                         # TGT boxes on faces, TRK brackets on the body
+        ox, oy = L.off("target")
+        if cfg.get("body_box"):
+            bcx, bcy, bw, bh = cfg["body_box"]
+            x0, y0, x1, y1 = int(bcx - bw / 2) + ox, int(bcy - bh / 2) + oy, int(bcx + bw / 2) + ox, int(bcy + bh / 2) + oy
+            corner_brackets(layer, x0, y0, x1, y1, int(0.06 * min(W, H)), G, th)
+            put_text(layer, "TRK", (x0 + int(6 * s), y0 - int(8 * s)), FONT, sc, G, tk(sc), A)
+        for i, (fcx, fcy, fw, fh) in enumerate(cfg.get("boxes", [])):
+            side = int(fw * 0.6)                                  # tracker boxes are the whole head plus margin; ~face size
+            x0, y0 = int(fcx - side / 2) + ox, int(fcy - side / 2) + oy
+            cv2.rectangle(layer, (x0, y0), (x0 + side, y0 + side), G, th, A)
+            d = int(10 * s)
+            dia = np.array([(x0 + side // 2, y0 - d * 2), (x0 + side // 2 + d, y0 - d), (x0 + side // 2, y0), (x0 + side // 2 - d, y0 - d)], np.int32)
+            cv2.polylines(layer, [dia], True, G, th, A)
+            put_text(layer, "TGT LOCK" if int(t * 3) % 3 else "TGT", (x0, y0 + side + int(22 * s)), FONT, sc, G, tk(sc), A)
+            put_text(layer, f"R {1.2 + 0.3 * math.sin(t + i):.1f}", (x0 + side + int(10 * s), y0 + side), FONT, sc, G, tk(sc), A)
+
+    if L.show("status"):                                         # mode label (top left)
+        ox, oy = L.off("status")
+        put_text(layer, cfg["title"], (int(0.06 * W) + ox, int(0.17 * H) + oy), FONT, sc, G, tk(sc), A)
+        cv2.rectangle(layer, (int(0.06 * W) + ox - int(6 * s), int(0.17 * H) + oy - int(22 * s)),
+                      (int(0.06 * W) + ox + text_w(cfg["title"], sc, tk(sc)) + int(6 * s), int(0.17 * H) + oy + int(8 * s)), G, th, A)
+    if L.show("readouts"):                                       # flight data and Zulu time (bottom left)
+        ox, oy = L.off("readouts")
+        rows = [f"AOA {5 + 3 * math.sin(t * 0.4):.1f}", f"M {speed / 1100:.2f}", f"G {1.0 + 0.7 * abs(math.sin(t * 0.6)):.1f}",
+                clock_at(cfg, t).strftime("%H:%M:%SZ")]
+        for i, txt in enumerate(rows):
+            put_text(layer, txt, (int(0.06 * W) + ox, int(0.78 * H) + oy + i * int(30 * s)), FONT, sc, G, tk(sc), A)
+    return glow_finish(frame, layer, 2.2 * s, 0.9)
+
+
+def _arc(img, c, axes, angle, a0, a1, color, th):
+    cv2.ellipse(img, c, axes, angle, a0, a1, color, th, cv2.LINE_AA)
+
+
+def _chip(img, x, y, w, h, txt, color, th, s, filled=False):
+    rounded_rect(img, (x, y), (x + w, y + h), int(5 * s), color, th)
+    if filled:
+        sub = img[y + th:y + h - th, x + th:x + w - th]
+        sub[:] = np.maximum(sub, (np.array(color) * 0.25).astype(np.uint8))
+    sc = 0.62 * s
+    _centered(img, txt, x + w // 2, y + h // 2 + int(8 * s), sc, color, tk(sc, 1.2))
+
+
+def draw_hud_scifi(frame, t, frac, fps, cfg):
+    """Sci-fi control panel in cyan: chamfered frame and header, numbered ruler, orbiting target rings around
+    the head, gauge columns, label chips and live readouts."""
+    H, W = frame.shape[:2]
+    s = _ui_scale(W, H)
+    th = max(1, int(round(1.2 * s)))
+    A = cv2.LINE_AA
+    layer = np.zeros_like(frame)
+    L = Layout("scifi", cfg, W, H)
+    C = cfg.get("hud_bgr") or SCI_CYAN
+    D = tuple(int(c * 0.55) for c in C)
+    WHT = (240, 240, 240)
+    m, ch = int(0.035 * min(W, H)), int(0.05 * min(W, H))
+    sc = 0.55 * s
+
+    if L.show("frame"):                                          # chamfered frame with a header tab
+        ox, oy = L.off("frame")
+        x0, y0, x1, y1 = m + ox, m + int(0.05 * H) + oy, W - m + ox, H - m + oy
+        pts = [(x0 + ch, y0), (int(0.35 * W) + ox, y0), (int(0.35 * W) + ox + ch, y0 - int(0.035 * H)), (x1 - ch, y0 - int(0.035 * H)),
+               (x1, y0 - int(0.035 * H) + ch), (x1, y1 - ch), (x1 - ch, y1), (x0 + ch, y1), (x0, y1 - ch), (x0, y0 + ch)]
+        cv2.polylines(layer, [np.array(pts, np.int32)], True, C, th, A)
+    if L.show("header"):
+        ox, oy = L.off("header")
+        hx, hy = m + int(10 * s) + ox, m + int(0.035 * H) + oy
+        put_text(layer, "E1", (hx, hy), FONT, 1.0 * s, WHT, tk(1.0 * s, 1.4), A)
+        put_text(layer, cfg["title"], (hx + int(60 * s), hy), FONT, 0.7 * s, WHT, tk(0.7 * s, 1.3), A)
+    if L.show("ruler"):                                          # numbered ruler tape, drifting slowly
+        ox, oy = L.off("ruler")
+        ry, rx0, rx1 = int(0.13 * H) + oy, int(0.12 * W) + ox, int(0.88 * W) + ox
+        cv2.line(layer, (rx0, ry), (rx1, ry), D, th, A)
+        step = (rx1 - rx0) / 16
+        drift = (t * 0.15) % 1.0
+        for k in range(0, 17):
+            x = int(rx0 + (k + drift) * step) if k < 16 else int(rx0 + k * step)
+            for j in range(1, 5):
+                xx = int(x + j * step / 5)
+                if xx < rx1:
+                    cv2.line(layer, (xx, ry), (xx, ry + int(5 * s)), D, max(1, th - 1), A)
+            cv2.line(layer, (x, ry), (x, ry + int(11 * s)), C, th, A)
+            _centered(layer, str(abs(8 - k)), x, ry - int(8 * s), 0.45 * s, C, tk(0.45 * s))
+        put_text(layer, "CAM 23S", (rx0, ry - int(30 * s)), FONT, sc, WHT, tk(sc, 1.2), A)
+
+    if L.show("rings"):                                          # orbiting target rings on the head (or body, or center)
+        ox, oy = L.off("rings")
+        if cfg.get("boxes"):
+            fcx, fcy, fw, fh = cfg["boxes"][0]
+            rc, rr = (int(fcx), int(fcy)), int(fw * 0.38)        # head boxes are generous; hug the face
+        elif cfg.get("body_box"):
+            bcx, bcy, bw, bh = cfg["body_box"]
+            rc, rr = (int(bcx), int(bcy - bh * 0.25)), int(min(bw, bh) * 0.4)
+        else:
+            rc, rr = (W // 2, H // 2), int(0.18 * min(W, H))
+        rc = (rc[0] + ox, rc[1] + oy)
+        for k, (tilt, speed, ratio, col) in enumerate(((20, 40, 0.32, C), (-35, -28, 0.42, C), (70, 18, 0.25, D))):
+            ang = tilt + 10 * math.sin(t * 0.4 + k)
+            start = (t * speed) % 360
+            for seg in range(3):                                 # dashed orbit: three arcs per ring
+                _arc(layer, rc, (int(rr * 1.4), int(rr * 1.4 * ratio)), ang, start + seg * 120, start + seg * 120 + 80, col, th)
+        cv2.circle(layer, rc, int(rr * 1.18), D, max(1, th - 1), A)
+        for i in range(72):                                      # rotating tick ring
+            a = math.radians(i * 5 + t * 12)
+            r0, r1 = rr * 1.18, rr * (1.24 if i % 6 == 0 else 1.21)
+            cv2.line(layer, (int(rc[0] + r0 * math.cos(a)), int(rc[1] + r0 * math.sin(a))),
+                     (int(rc[0] + r1 * math.cos(a)), int(rc[1] + r1 * math.sin(a))), C, max(1, th - 1), A)
+        for a0 in (150, -30):                                    # heavy side brackets
+            _arc(layer, rc, (int(rr * 1.32), int(rr * 1.32)), 0, a0, a0 + 60, C, th + 1)
+        cv2.line(layer, (rc[0] - int(8 * s), rc[1]), (rc[0] + int(8 * s), rc[1]), C, th, A)
+        cv2.line(layer, (rc[0], rc[1] - int(8 * s)), (rc[0], rc[1] + int(8 * s)), C, th, A)
+        bx, by = rc[0] + int(rr * 0.9), rc[1] - int(rr * 1.25)
+        cv2.rectangle(layer, (bx, by - int(18 * s)), (bx + int(64 * s), by + int(4 * s)), C, max(1, th - 1), A)
+        put_text(layer, f"{(t * 0.37) % 1:.2f}", (bx + int(8 * s), by), FONT, 0.5 * s, WHT, tk(0.5 * s), A)
+
+    def gauges(name, x, right):
+        ox, oy = L.off(name)
+        r = int(14 * s)
+        vals = ("0.0", "81.9", "667", "86.6")
+        for i in range(7):
+            gx, gy = x + ox, int(0.3 * H) + oy + i * int(0.07 * H)
+            fill = 0.5 + 0.5 * math.sin(t * (0.6 + 0.13 * i) + i)
+            a0 = 90 if right else -90
+            _arc(layer, (gx, gy), (r, r), 0, a0, a0 + 180, D, th)
+            _arc(layer, (gx, gy), (r, r), 0, a0, a0 + 180 * fill, C, th + 1)
+            txt = vals[i % len(vals)]
+            tx = gx + (-r - int(8 * s) - text_w(txt, 0.42 * s, tk(0.42 * s)) if right else r + int(8 * s))
+            put_text(layer, txt, (tx, gy + int(5 * s)), FONT, 0.42 * s, WHT, tk(0.42 * s), A)
+
+    if L.show("gauges_left"):
+        gauges("gauges_left", m + int(26 * s), False)
+    if L.show("gauges_right"):
+        gauges("gauges_right", W - m - int(26 * s), True)
+    if L.show("chips"):                                          # label chips: a pair bottom left, a grid bottom right
+        ox, oy = L.off("chips")
+        cw, chh = int(46 * s), int(32 * s)
+        for i, txt in enumerate(("B2", "C8")):
+            _chip(layer, m + int(16 * s) + ox, int(0.72 * H) + oy + i * (chh + int(8 * s)), cw, chh, txt, C if i else WHT, th, s, filled=i == 1)
+        grid = ("N7", "K6", "E0", "B2", "X4", "Y5")
+        for i, txt in enumerate(grid):
+            lit = (int(t * 2) + i) % 4 != 0
+            _chip(layer, W - m - int(16 * s) - 2 * cw - int(6 * s) + (i % 2) * (cw + int(6 * s)) + ox,
+                  int(0.80 * H) + oy + (i // 2) * (chh + int(6 * s)), cw, chh, txt, C if lit else D, th, s)
+    if L.show("readouts"):                                       # live readouts, bottom center
+        ox, oy = L.off("readouts")
+        rows = (("SYNC", f"{97 + 2 * math.sin(t):.1f}"), ("BPM", f"{int(118 + 8 * abs(math.sin(t * 0.7)))}"), ("VIB", f"{2.0 + 0.4 * math.sin(t * 3):.1f}"))
+        for i, (lab, val) in enumerate(rows):
+            y = int(0.82 * H) + oy + i * int(36 * s)
+            x = int(0.36 * W) + ox
+            cv2.rectangle(layer, (x, y - int(22 * s)), (x + int(80 * s), y + int(6 * s)), WHT, max(1, th - 1), A)
+            put_text(layer, val, (x + int(8 * s), y), FONT, 0.55 * s, WHT, tk(0.55 * s), A)
+            put_text(layer, lab, (x + int(94 * s), y), FONT, 0.5 * s, C, tk(0.5 * s), A)
+    return glow_finish(frame, layer, 1.8 * s, 0.7)
+
+
+def draw_hud_y2k(frame, t, frac, fps, cfg):
+    """Y2K / minimal graphic layout: one big lowercase word in the accent color, an accent side bar with a barcode,
+    segmented bars, a filling dot row, parallel rules, a sunburst, drifting crosshairs and a ring-and-plus icon."""
+    out = frame.copy()
+    H, W = out.shape[:2]
+    s = _ui_scale(W, H)
+    th = max(1, int(round(1.4 * s)))
+    A = cv2.LINE_AA
+    L = Layout("y2k", cfg, W, H)
+    ACC = cfg.get("accent_bgr") or Y2K_ACID
+    WHT, INK = (246, 246, 246), (18, 18, 18)
+    m = int(0.045 * min(W, H))
+    if L.show("bar"):                                            # accent side bar, notched, with a barcode
+        ox, oy = L.off("bar")
+        bx0, by0, bx1, by1 = m + ox, int(0.14 * H) + oy, m + int(0.075 * W) + ox, int(0.86 * H) + oy
+        n = int(0.03 * W)
+        pts = np.array([(bx0, by0 + n), (bx0 + n, by0), (bx1, by0), (bx1, by1), (bx0, by1)], np.int32)
+        cv2.fillPoly(out, [pts], ACC, A)
+        rng = np.random.default_rng(7)
+        y = by1 - int(0.02 * H)
+        for _ in range(26):                                      # barcode, printed in ink on the bar
+            w_ = int(rng.integers(1, 4) * s * 0.8) + 1
+            cv2.rectangle(out, (bx0 + int(0.15 * (bx1 - bx0)), y - w_), (bx1 - int(0.15 * (bx1 - bx0)), y), INK, -1)
+            y -= w_ + int(rng.integers(1, 3) * s * 0.8) + 1
+        for i in range(3):                                       # thin vertical rules beside the bar
+            x = bx1 + int((10 + 8 * i) * s)
+            cv2.line(out, (x, by0 + int(0.05 * H)), (x, by0 + int((0.25 - 0.05 * i) * H)), WHT, max(1, th - 1), A)
+    if L.show("segments"):                                       # rounded segment bars, filling with time
+        ox, oy = L.off("segments")
+        x, y = int(0.2 * W) + ox, int(0.12 * H) + oy
+        lit = int(t * 2) % 6
+        for i in range(5):
+            col = ACC if i < max(1, lit) else WHT
+            cv2.rectangle(out, (x + i * int(30 * s), y), (x + i * int(30 * s) + int(22 * s), y + int(10 * s)), col, -1 if i < max(1, lit) else max(1, th - 1), A)
+    if L.show("burst"):                                          # sunburst mark
+        ox, oy = L.off("burst")
+        bcx, bcy, r0, r1 = int(0.84 * W) + ox, int(0.12 * H) + oy, int(7 * s), int(17 * s)
+        for i in range(8):
+            a = math.radians(i * 45 + 22.5 + t * 30)
+            cv2.line(out, (int(bcx + r0 * math.cos(a)), int(bcy + r0 * math.sin(a))), (int(bcx + r1 * math.cos(a)), int(bcy + r1 * math.sin(a))), WHT, th + 1, A)
+    if L.show("dots"):                                           # dot row that fills and empties
+        ox, oy = L.off("dots")
+        x, y = int(0.56 * W) + ox, int(0.075 * H) + oy
+        k = int(t * 3) % 8
+        for i in range(6):
+            c = (x + i * int(17 * s), y)
+            cv2.circle(out, c, int(6 * s), ACC if i < k else WHT, -1 if i < k else max(1, th - 1), A)
+    if L.show("rules"):                                          # parallel rules with a slanted tick
+        ox, oy = L.off("rules")
+        x0, y = int(0.20 * W) + ox, int(0.16 * H) + oy
+        for i, frac_ in enumerate((1.0, 0.8, 0.9, 0.55)):
+            cv2.line(out, (x0, y + i * int(9 * s)), (x0 + int(0.34 * W * frac_), y + i * int(9 * s)), WHT, max(1, th - 1), A)
+        cv2.line(out, (x0 - int(30 * s), y + int(28 * s)), (x0 - int(10 * s), y), WHT, th, A)
+    if L.show("crosses"):                                        # drifting + crosshairs that fade in and out
+        ox, oy = L.off("crosses")
+        rng = np.random.default_rng(3)
+        for i in range(10):
+            px, py = rng.uniform(0.15, 0.95), rng.uniform(0.45, 0.82)
+            a = 0.5 + 0.5 * math.sin(t * rng.uniform(0.5, 1.4) + i)
+            if a < 0.35:
+                continue
+            x, y = int((px + 0.01 * math.sin(t * 0.3 + i)) * W) + ox, int(py * H) + oy
+            c = tuple(int(v * a) for v in WHT)
+            r = int(8 * s)
+            cv2.line(out, (x - r, y), (x + r, y), c, max(1, th - 1), A)
+            cv2.line(out, (x, y - r), (x, y + r), c, max(1, th - 1), A)
+    if L.show("icon"):                                           # ring-and-plus mark (bottom left)
+        ox, oy = L.off("icon")
+        icx, icy, r = m + int(0.075 * W) + int(48 * s) + ox, int(0.9 * H) + oy, int(26 * s)
+        cv2.ellipse(out, (icx, icy), (r, r), 0, 40, 330, WHT, th + 2, A)
+        cv2.ellipse(out, (icx, icy), (int(r * 0.55), int(r * 0.55)), 0, 40, 330, WHT, th + 1, A)
+        sq = int(r * 0.75)
+        cv2.rectangle(out, (icx + int(r * 0.2), icy - r), (icx + int(r * 0.2) + sq, icy - r + sq), WHT, th + 1, A)
+        pc = (icx + int(r * 0.2) + sq // 2, icy - r + sq // 2)
+        cv2.line(out, (pc[0] - sq // 4, pc[1]), (pc[0] + sq // 4, pc[1]), WHT, th + 1, A)
+        cv2.line(out, (pc[0], pc[1] - sq // 4), (pc[0], pc[1] + sq // 4), WHT, th + 1, A)
+    if L.show("word"):                                           # the big word, bottom right
+        ox, oy = L.off("word")
+        word = cfg["title"]
+        sc = 3.2 * s
+        wpx = text_w(word, sc, tk(sc, 1.6))
+        if wpx > 0.62 * W:
+            sc *= 0.62 * W / wpx
+        thick = tk(sc, 1.6)
+        x = W - m - text_w(word, sc, thick) + ox
+        shadow_text(out, word, (x, H - m - int(10 * s) + oy), sc, ACC, thick, shadow=None)
+        put_text(out, "edition 01", (x, H - m - int(10 * s) - int(sc * 34) + oy), FONT, 0.45 * s, WHT, tk(0.45 * s), A)
+    return out
+
+
 HUD_THEMES = {"eve": None, "angelcore": draw_hud_angelcore, "terminal": draw_hud_terminal,
-              "security": draw_hud_security, "vhs": draw_hud_vhs, "thermal": draw_hud_thermal}
+              "security": draw_hud_security, "vhs": draw_hud_vhs, "thermal": draw_hud_thermal,
+              "military": draw_hud_military, "scifi": draw_hud_scifi, "y2k": draw_hud_y2k}
 
 
 def ascii_safe(text):
@@ -2615,7 +2994,7 @@ def build_parser():
                     help="base dissolve: square blocks, a hex lattice of dots, a growing blur, or nothing (use with --ripple or --moire)")
     ap.add_argument("--look", choices=["auto"] + list(LOOKS), default="auto",
                     help="color look: auto = eve with --style eve, otherwise default; or rose, gold, teal, ember, vapor, noir; "
-                         "camera looks cctv, vhs, nightshot, thermal, thermal-iron")
+                         "camera looks cctv, vhs, nightshot, thermal, thermal-iron; graphic looks tactical, chrome, lilac, acid")
     ap.add_argument("--tone-shadows", default="", help="your own tone: color for the darkest parts, #RRGGBB (replaces the look's colors; default black)")
     ap.add_argument("--tone-mids", default="", help="your own tone: color for the midtones (default: halfway between shadows and highlights)")
     ap.add_argument("--tone-highlights", default="", help="your own tone: color for the brightest parts (default white)")
@@ -2859,6 +3238,8 @@ def setup(args):
     look_name = args.look if args.look != "auto" else ("eve" if args.style == "eve" else "default")
     title = THEME_LABELS.get(args.theme, args.hud_title) if args.hud_title == "LIVE STREAM" else args.hud_title
     hud_cfg = {"title": clean_text(title), "clock0": parse_clock(args.hud_clock), "nightshot": look_name == "nightshot",
+               "accent_bgr": parse_color(args.accent) if args.accent else None,
+               "hud_bgr": parse_color(args.hud_color) if args.hud_color else None,
                "vhs_title": clean_text(args.hud_tag) if args.hud_tag != "ASCENSION.exe" else "", "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "layout": load_layout(args.layout), "prompt": "TRANSMIT MESSAGE...",
                "tag": clean_text(args.hud_tag), "tagline": clean_text(args.hud_tagline), "vertical": clean_text(args.hud_vertical), "boxes": [], "lockon": args.lockon, "sigils": args.sigils, "hearts": args.hearts}
     hud_fn = HUD_THEMES[args.theme] or draw_hud

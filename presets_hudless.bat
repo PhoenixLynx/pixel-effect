@@ -22,7 +22,7 @@ rem   switches: --no-grade   (skip the color look)
 set LOOK=--style eve --mode blocks --look auto --tone-shadows "" --tone-mids "" --tone-highlights "" --tone-strength -1 --wash "" --wash-opacity 0.3 --wash-blend softlight
 
 rem ---- HUD: the live-stream overlay
-rem   --theme       eve | angelcore | terminal
+rem   --theme       eve | angelcore | terminal | security | vhs | thermal
 rem   --accent      hearts, lock-on boxes, LIVE badge: #RRGGBB or R,G,B ("" = theme default)
 rem   --hud-color   main HUD text and lines: #RRGGBB or R,G,B ("" = theme default)
 rem   --hud-tag     (angelcore) small tag under the title
@@ -31,8 +31,9 @@ rem   --hud-vertical (angelcore) text running up the right edge
 rem   --hud-time    (still images) which second of the HUD animation to show
 rem   HUD on/off:   left out = automatic (on with --style eve or a non-eve theme)
 rem   --layout      a layout file (JSON) that moves or hides HUD elements ("" = the theme's own layout)
+rem   --hud-clock   date and time the security/vhs clocks start at, e.g. "1988-09-17 17:14" ("" = now)
 rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
-set HUD=--theme angelcore --accent "" --hud-color "" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0 --layout "" --no-lockon --no-hud
+set HUD=--theme angelcore --accent "" --hud-color "" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0 --hud-clock "" --layout "" --no-lockon --no-hud
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
 rem   any font option takes an installed font's name ("Segoe UI Bold") or a file path

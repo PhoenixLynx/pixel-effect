@@ -951,11 +951,15 @@ def gradient_map(frame, stops, strength, normalize=False, heat=None):
     if normalize:                                        # use the whole palette: stretch the 2nd..98th percentile to 0..255
         lo, hi = np.percentile(gray[::4, ::4], (2, 98))
         gray = np.clip((gray.astype(np.float32) - lo) * (255.0 / max(1.0, hi - lo)), 0, 255).astype(np.uint8)
+    if normalize:
+        THERMAL["stops"] = stops
     if heat is not None:                                 # thermal: people are the warm thing in the scene, with a glow
         h = np.clip((heat - 0.35) / 0.3, 0, 1)            # the person model is soft: background ~0.25, people ~0.75
         h = h * h * (3 - 2 * h)                           # smoothstep: clean warm/cool split with soft edges
         glow = cv2.GaussianBlur(h, (0, 0), max(2.0, 0.015 * frame.shape[0]))
-        gray = np.clip(gray.astype(np.float32) * 0.42 + np.maximum(h, glow * 0.7) * 140, 0, 255).astype(np.uint8)
+        gray = np.clip(gray.astype(np.float32) * 0.42 + np.maximum(h, glow * 0.7) * 168, 0, 255).astype(np.uint8)
+    if normalize:
+        THERMAL["gray"] = gray
     xs = [s[0] for s in stops]
     lut = np.zeros((256, 1, 3), np.uint8)
     for c in range(3):                                   # BGR channel c uses RGB index 2 - c
@@ -1288,6 +1292,10 @@ HUD_ELEMENTS = {
     "terminal": {"ticker": (0.0, 0.0), "panels": (0.70, 0.045), "feed": (0.50, 0.62), "chat": (0.02, 0.62),
                  "hearts": (0.36, 0.855), "title": (0.02, 0.075), "input": (0.02, 0.895), "status": (0.02, 0.975),
                  "progress": (0.0, 0.945)},
+    "security": {"frame": (0.05, 0.05), "label": (0.10, 0.10), "rec": (0.90, 0.10), "clock": (0.50, 0.90), "motion": (0.50, 0.50)},
+    "vhs": {"play": (0.07, 0.07), "counter": (0.93, 0.07), "date": (0.07, 0.90), "title": (0.50, 0.45)},
+    "thermal": {"readout": (0.05, 0.05), "spots": (0.05, 0.16), "crosshair": (0.50, 0.50), "brand": (0.90, 0.07),
+                "scale": (0.50, 0.95)},
 }
 
 
@@ -1891,7 +1899,284 @@ def load_overlay(path, W, H, start=0.0, key="", tolerance=60):
     return img
 
 
-HUD_THEMES = {"eve": None, "angelcore": draw_hud_angelcore, "terminal": draw_hud_terminal}
+# ---- Camera themes: security, vhs, thermal --------------------------------------------------------
+# These draw like real camera displays: solid text with a dark shadow straight onto the picture (no glow).
+# Sizes follow the frame's shorter side, so they fit tall phone video as well as wide video.
+THEME_LABELS = {"security": "CAM 1", "vhs": "", "thermal": "IR-7"}         # used when --hud-title is left at its default
+THEME_FONTS = {"security": ["Consolas", "Lucida Console"], "vhs": ["VCR OSD Mono", "Consolas"],
+               "thermal": ["Bahnschrift", "Segoe UI"]}                       # used when --hud-font is not set
+THERMAL = {"gray": None, "stops": None}                                      # the last thermal look's heat map, for the HUD
+THERMAL_RANGE = (8.0, 37.0)                                                  # degrees C at the cold and hot ends of the scale
+
+
+def _ui_scale(W, H):
+    return min(W, H) / 600.0
+
+
+def text_w(txt, scale, thick, font=FONT):
+    return hud_text_size(txt, font, scale, thick)[0][0]
+
+
+def shadow_text(img, txt, org, scale, color, thick, shadow=(0, 0, 0)):
+    """Solid text with a soft drop shadow, readable on any footage. Real alpha blending (put_text alone can
+    only brighten, which suits glowing HUDs but can never draw a dark shadow)."""
+    (tw, th_), base = hud_text_size(txt, FONT, scale, thick)
+    o = max(1, int(round(scale * 2.2)))
+    pad = int(10 * scale) + 2 * o
+    top = org[1] - th_ - pad - int(12 * scale)
+    left = org[0] - pad
+    ph, pw = th_ + base + 2 * pad + int(24 * scale), tw + 2 * pad + int(12 * scale)
+    patch = np.zeros((ph, pw, 3), np.uint8)
+    put_text(patch, txt, (org[0] - left, org[1] - top), FONT, scale, (255, 255, 255), thick, cv2.LINE_AA)
+    m = patch[..., 0].astype(np.float32) / 255.0
+    sh = np.roll(np.roll(cv2.dilate(m, np.ones((3, 3), np.uint8)), o, axis=0), o, axis=1)
+    sh = np.clip(cv2.GaussianBlur(sh, (0, 0), max(0.8, 1.2 * scale)) * 1.3, 0, 0.85)
+    H, W = img.shape[:2]
+    x0, y0, x1, y1 = max(0, left), max(0, top), min(W, left + pw), min(H, top + ph)
+    if x1 <= x0 or y1 <= y0:
+        return
+    m = m[y0 - top:y1 - top, x0 - left:x1 - left, None]
+    sh = sh[y0 - top:y1 - top, x0 - left:x1 - left, None]
+    region = img[y0:y1, x0:x1].astype(np.float32)
+    region = region * (1 - sh) + np.array(shadow, np.float32) * sh
+    img[y0:y1, x0:x1] = (region * (1 - m) + np.array(color, np.float32) * m).astype(np.uint8)
+
+
+def corner_brackets(img, x0, y0, x1, y1, L, color, th):
+    for (x, y, dx, dy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+        cv2.line(img, (x, y), (x + dx * L, y), color, th, cv2.LINE_AA)
+        cv2.line(img, (x, y), (x, y + dy * L), color, th, cv2.LINE_AA)
+
+
+def clock_at(cfg, t):
+    import datetime
+    return datetime.datetime.fromtimestamp(cfg.get("clock0", 0) + t)
+
+
+def battery_icon(img, x, y, w, h, color, th, level=0.75):
+    cv2.rectangle(img, (x, y), (x + w, y + h), color, th, cv2.LINE_AA)
+    cv2.rectangle(img, (x + w, y + h // 4), (x + w + max(2, w // 10), y + 3 * h // 4), color, -1)
+    pad = max(2, th + 1)
+    cv2.rectangle(img, (x + pad, y + pad), (x + pad + int((w - 2 * pad) * level), y + h - pad), color, -1)
+
+
+def draw_hud_security(frame, t, frac, fps, cfg):
+    """CCTV / wireless monitor: corner brackets, CAM label, signal and channel icons, blinking REC, date and time."""
+    out = frame.copy()
+    H, W = out.shape[:2]
+    s = _ui_scale(W, H)
+    th = max(1, int(round(1.6 * s)))
+    A = cv2.LINE_AA
+    L = Layout("security", cfg, W, H)
+    WHITE, RED, YEL, CYAN = (236, 236, 236), (50, 45, 235), (90, 230, 240), (240, 200, 90)
+    m = int(0.05 * min(W, H))
+    if L.show("frame"):
+        ox, oy = L.off("frame")
+        corner_brackets(out, m + ox, m + oy, W - m + ox, H - m + oy, int(0.08 * min(W, H)), WHITE, th + 1)
+    sc = 0.8 * s
+    if L.show("label"):
+        ox, oy = L.off("label")
+        x, y = 2 * m + ox, 2 * m + int(20 * s) + oy
+        shadow_text(out, cfg["title"], (x, y), sc, WHITE, tk(sc, 1.2))
+        iy = y + int(14 * s)                                     # signal bars and channel box (wireless monitor)
+        bw, gap = max(2, int(4 * s)), max(1, int(2 * s))
+        for i in range(4):
+            bh = int((5 + 4 * i) * s)
+            col = CYAN if i < 3 + (int(t * 1.5) % 2) else (90, 90, 90)
+            cv2.rectangle(out, (x + i * (bw + gap), iy + int(18 * s) - bh), (x + i * (bw + gap) + bw, iy + int(18 * s)), col, -1)
+        cx = x + 4 * (bw + gap) + int(10 * s)
+        cv2.rectangle(out, (cx, iy), (cx + int(22 * s), iy + int(20 * s)), YEL, max(1, th - 1), A)
+        ch = (re.findall(r"\d+", cfg["title"]) or ["1"])[-1]
+        put_text(out, ch, (cx + int(5 * s), iy + int(16 * s)), FONT, 0.5 * s, YEL, tk(0.5 * s), A)
+    if L.show("rec"):
+        ox, oy = L.off("rec")
+        x2, y = W - 2 * m + ox, 2 * m + int(20 * s) + oy
+        tw = text_w("REC", sc, tk(sc, 1.2))
+        shadow_text(out, "REC", (x2 - tw, y), sc, WHITE, tk(sc, 1.2))
+        if int(t * 2) % 2 == 0:
+            cv2.circle(out, (x2 - tw - int(14 * s), y - int(8 * s)), int(7 * s), RED, -1, A)
+        battery_icon(out, x2 - tw - int(64 * s), y - int(15 * s), int(28 * s), int(14 * s), WHITE, max(1, th - 1), 0.35)
+    if L.show("clock"):
+        ox, oy = L.off("clock")
+        txt = clock_at(cfg, t).strftime("%Y-%m-%d  %H:%M:%S")
+        tw = text_w(txt, sc, tk(sc, 1.2))
+        shadow_text(out, txt, ((W - tw) // 2 + ox, H - 2 * m + oy), sc, WHITE, tk(sc, 1.2))
+    if L.show("motion"):                                         # thin boxes on what moves: the person and faces
+        ox, oy = L.off("motion")
+        targets = ([("MOTION", cfg["body_box"])] if cfg.get("body_box") else []) + \
+                  [(f"FACE {i + 1}", b) for i, b in enumerate(cfg.get("boxes", []))]
+        for label, (cx, cy, bw, bh) in targets:
+            x0, y0 = int(cx - bw / 2) + ox, int(cy - bh / 2) + oy
+            cv2.rectangle(out, (x0, y0), (x0 + int(bw), y0 + int(bh)), WHITE, max(1, th - 1), A)
+            shadow_text(out, label, (max(int(4 * s), x0 + int(4 * s)), max(int(16 * s), y0 - int(6 * s))), 0.42 * s, WHITE, tk(0.42 * s))
+    return out
+
+
+def _triangle(img, x, y, size, color):
+    pts = np.array([(x, y - size), (x + int(size * 1.4), y), (x, y + size)], np.int32)
+    cv2.fillPoly(img, [pts], color, cv2.LINE_AA)
+
+
+def _eye_icon(img, cx, cy, w, color, th):
+    cv2.ellipse(img, (cx, cy), (w // 2, w // 4), 0, 0, 360, color, th, cv2.LINE_AA)
+    cv2.circle(img, (cx, cy), max(2, w // 7), color, -1, cv2.LINE_AA)
+    cv2.rectangle(img, (cx - int(w * 0.65), cy - int(w * 0.4)), (cx + int(w * 0.65), cy + int(w * 0.4)), color, th, cv2.LINE_AA)
+
+
+def draw_hud_vhs(frame, t, frac, fps, cfg):
+    """Home-video camcorder: PLAY and SP, tape counter, battery, big date and time, optional title and NIGHTSHOT."""
+    out = frame.copy()
+    H, W = out.shape[:2]
+    s = _ui_scale(W, H)
+    th = max(1, int(round(1.5 * s)))
+    L = Layout("vhs", cfg, W, H)
+    WHITE = (242, 242, 242)
+    m = int(0.07 * min(W, H))
+    big, mid = 1.15 * s, 0.85 * s
+    if L.show("play"):
+        ox, oy = L.off("play")
+        x, y = m + ox, m + int(26 * s) + oy
+        shadow_text(out, "PLAY", (x, y), big, WHITE, tk(big, 1.3))
+        tx = x + text_w("PLAY", big, tk(big, 1.3)) + int(12 * s)
+        _triangle(out, tx + 2, y - int(10 * s) + 2, int(11 * s), (0, 0, 0))
+        _triangle(out, tx, y - int(10 * s), int(11 * s), WHITE)
+        shadow_text(out, "SP", (x, y + int(36 * s)), mid, WHITE, tk(mid, 1.2))
+        if cfg.get("nightshot"):
+            _eye_icon(out, x + int(20 * s), y + int(70 * s), int(30 * s), WHITE, max(1, th - 1))
+            shadow_text(out, "NIGHTSHOT", (x + int(44 * s), y + int(78 * s)), 0.6 * s, WHITE, tk(0.6 * s))
+    if L.show("counter"):
+        ox, oy = L.off("counter")
+        sec = int(t)
+        txt = f"{sec // 3600}:{sec // 60 % 60:02d}:{sec % 60:02d}"
+        x2, y = W - m + ox, m + int(26 * s) + oy
+        shadow_text(out, txt, (x2 - text_w(txt, big, tk(big, 1.3)), y), big, WHITE, tk(big, 1.3))
+        if int(t * 1.5) % 2 == 0:                                # low battery blinks
+            battery_icon(out, x2 - int(40 * s), y + int(16 * s), int(36 * s), int(17 * s), WHITE, max(1, th - 1), 0.25)
+    if L.show("date"):
+        ox, oy = L.off("date")
+        dt = clock_at(cfg, t)
+        line1 = f"{'PM' if dt.hour >= 12 else 'AM'} {(dt.hour % 12) or 12}:{dt.minute:02d}"
+        line2 = dt.strftime("%b. %d %Y").upper().replace(" 0", " ")
+        shadow_text(out, line1, (m + ox, H - m - int(44 * s) + oy), big, WHITE, tk(big, 1.3))
+        shadow_text(out, line2, (m + ox, H - m + oy), big, WHITE, tk(big, 1.3))
+    if L.show("title") and cfg.get("vhs_title"):
+        ox, oy = L.off("title")
+        tt = cfg["vhs_title"]
+        sc = 1.3 * s
+        tw = text_w(tt, sc, tk(sc, 1.3))
+        shadow_text(out, tt, ((W - tw) // 2 + ox, int(0.45 * H) + oy), sc, WHITE, tk(sc, 1.3))
+    return out
+
+
+def _temp(v):
+    lo, hi = THERMAL_RANGE
+    return lo + float(v) / 255.0 * (hi - lo)
+
+
+def _deg_text(img, value, org, scale, color, thick, shadow=True):
+    """'36.4' + a drawn degree ring + 'C' (OpenCV fonts have no degree sign). Returns the end x."""
+    num = f"{value:.1f}"
+    (shadow_text if shadow else lambda im, tx, o, sc, c, th_: put_text(im, tx, o, FONT, sc, c, th_, cv2.LINE_AA))(img, num, org, scale, color, thick)
+    x = org[0] + text_w(num, scale, thick) + int(6 * scale)
+    r = max(2, int(5 * scale))
+    cv2.circle(img, (x + r, org[1] - int(22 * scale)), r, color, max(1, thick // 2), cv2.LINE_AA)
+    x += 2 * r + int(3 * scale)
+    (shadow_text if shadow else lambda im, tx, o, sc, c, th_: put_text(im, tx, o, FONT, sc, c, th_, cv2.LINE_AA))(img, "C", (x, org[1]), scale, color, thick)
+    return x + text_w("C", scale, thick)
+
+
+def _spot_marker(img, x, y, r, fill, th):
+    cv2.circle(img, (x, y), r, (255, 255, 255), th, cv2.LINE_AA)
+    cv2.circle(img, (x, y), max(2, r // 2), fill, -1, cv2.LINE_AA)
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        cv2.line(img, (x + dx * r, y + dy * r), (x + dx * int(r * 1.8), y + dy * int(r * 1.8)), (255, 255, 255), th, cv2.LINE_AA)
+
+
+def draw_hud_thermal(frame, t, frac, fps, cfg):
+    """Thermal camera: big center reading, hot and cold spot markers that follow the real extremes,
+    center crosshair, color scale with its range, and a brand label. Pair with --look thermal or thermal-iron."""
+    out = frame.copy()
+    H, W = out.shape[:2]
+    s = _ui_scale(W, H)
+    th = max(1, int(round(1.4 * s)))
+    A = cv2.LINE_AA
+    L = Layout("thermal", cfg, W, H)
+    WHITE = (250, 250, 250)
+    gray = THERMAL["gray"] if THERMAL["gray"] is not None and THERMAL["gray"].shape == (H, W) else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    small = cv2.GaussianBlur(cv2.resize(gray, (max(8, W // 8), max(8, H // 8)), interpolation=cv2.INTER_AREA), (0, 0), 1.5)
+    _, _, lo_pt, hi_pt = cv2.minMaxLoc(small)
+    st = cfg.setdefault("_thermal", {})                          # smooth the markers so they glide, not jump
+    for key, pt in (("hot", hi_pt), ("cold", lo_pt)):
+        px, py = (pt[0] + 0.5) * W / small.shape[1], (pt[1] + 0.5) * H / small.shape[0]
+        old = st.get(key)
+        st[key] = (px, py) if old is None else (old[0] * 0.8 + px * 0.2, old[1] * 0.8 + py * 0.2)
+    hot_v = float(small.max())
+    cold_v = float(small.min())
+    cx, cy = W // 2, H // 2
+    center_v = float(small[min(small.shape[0] - 1, cy * small.shape[0] // H), min(small.shape[1] - 1, cx * small.shape[1] // W)])
+    m = int(0.05 * min(W, H))
+    if L.show("readout"):                                        # big center reading in a dark box
+        ox, oy = L.off("readout")
+        sc = 1.5 * s
+        x0, y0 = m + ox, m + oy
+        bw, bh = int(205 * s), int(66 * s)
+        roi = out[max(0, y0):max(0, y0 + bh), max(0, x0):max(0, x0 + bw)]
+        if roi.size:
+            roi[:] = (roi.astype(np.float32) * 0.45).astype(np.uint8)
+        _deg_text(out, _temp(center_v), (x0 + int(12 * s), y0 + int(50 * s)), sc, WHITE, tk(sc, 1.3), shadow=False)
+    if L.show("spots"):                                          # legend + markers on the hottest and coldest points
+        ox, oy = L.off("spots")
+        lx, ly = m + ox, m + int(86 * s) + oy
+        rows = (((255, 255, 255), center_v), ((40, 40, 230), hot_v), ((230, 140, 40), cold_v))
+        bh = int(28 * s) * len(rows) + int(10 * s)
+        roi = out[max(0, ly):max(0, ly + bh), max(0, lx):max(0, lx + int(150 * s))]
+        if roi.size:
+            roi[:] = (roi.astype(np.float32) * 0.5).astype(np.uint8)
+        for i, (col, v) in enumerate(rows):
+            yy = ly + int(22 * s) + i * int(28 * s)
+            _spot_marker(out, lx + int(18 * s), yy - int(6 * s), int(6 * s), col, max(1, th - 1))
+            _deg_text(out, _temp(v), (lx + int(40 * s), yy), 0.62 * s, WHITE, tk(0.62 * s), shadow=False)
+        for key, col in (("hot", (40, 40, 230)), ("cold", (230, 140, 40))):
+            x, y = st[key]
+            _spot_marker(out, int(x) + ox, int(y) + oy, int(10 * s), col, th)
+    if L.show("crosshair"):
+        ox, oy = L.off("crosshair")
+        r = int(16 * s)
+        cv2.circle(out, (cx + ox, cy + oy), r, (0, 0, 0), th + 2, A)
+        cv2.circle(out, (cx + ox, cy + oy), r, WHITE, th, A)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            p0, p1 = (cx + ox + dx * r, cy + oy + dy * r), (cx + ox + dx * int(r * 2.6), cy + oy + dy * int(r * 2.6))
+            cv2.line(out, p0, p1, (0, 0, 0), th + 2, A)
+            cv2.line(out, p0, p1, WHITE, th, A)
+    if L.show("brand"):                                          # four-diamond mark + label (generic, not a real brand)
+        ox, oy = L.off("brand")
+        sc = 0.9 * s
+        tw = text_w(cfg["title"], sc, tk(sc, 1.3))
+        x2, y = W - m + ox, m + int(34 * s) + oy
+        shadow_text(out, cfg["title"], (x2 - tw, y), sc, WHITE, tk(sc, 1.3))
+        d, gx, gy = int(7 * s), x2 - tw - int(22 * s), y - int(11 * s)
+        for ddx, ddy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+            c = (gx + ddx * d, gy + ddy * d)
+            cv2.fillPoly(out, [np.array([(c[0], c[1] - d // 1.4), (c[0] + d // 1.4, c[1]), (c[0], c[1] + d // 1.4), (c[0] - d // 1.4, c[1])], np.int32)], WHITE, A)
+    if L.show("scale"):                                          # color bar with the range at both ends
+        ox, oy = L.off("scale")
+        stops = THERMAL["stops"] or [(0, (0, 0, 0)), (255, (255, 255, 255))]
+        bw, bh = int(0.5 * W), int(14 * s)
+        x0, y0 = (W - bw) // 2 + ox, H - m - bh + oy
+        xs = np.linspace(0, 255, bw)
+        bar = np.stack([np.interp(xs, [p[0] for p in stops], [p[1][2 - c] for p in stops]) for c in range(3)], axis=1).astype(np.uint8)
+        y1, x1 = min(H, y0 + bh), min(W, x0 + bw)
+        if y1 > max(0, y0) and x1 > max(0, x0):
+            out[max(0, y0):y1, max(0, x0):x1] = bar[None, max(0, -x0):max(0, -x0) + (x1 - max(0, x0))]
+        cv2.rectangle(out, (x0, y0), (x0 + bw, y0 + bh), WHITE, max(1, th - 1), A)
+        lo_t, hi_t = THERMAL_RANGE
+        _deg_text(out, lo_t, (x0 - int(92 * s), y0 + bh), 0.7 * s, WHITE, tk(0.7 * s))
+        _deg_text(out, hi_t, (x0 + bw + int(12 * s), y0 + bh), 0.7 * s, WHITE, tk(0.7 * s))
+    return out
+
+
+HUD_THEMES = {"eve": None, "angelcore": draw_hud_angelcore, "terminal": draw_hud_terminal,
+              "security": draw_hud_security, "vhs": draw_hud_vhs, "thermal": draw_hud_thermal}
 
 
 def ascii_safe(text):
@@ -2315,7 +2600,7 @@ def draw_custom_sigil(img, cx, cy, size, color, th, seed, t):
 # even when it runs many times in one process (the GUI preview).
 _RESETTABLE = ("GLYPH_SIZE", "SIGIL_SCALE", "TITLE_SCALE", "CHAT_BACKDROP", "SIGIL_MASKS", "HUD_TEXT_SCALE", "cascade", "yunet",
                "HUD_PINK", "HUD_CYAN", "ANGEL_WHITE", "ANGEL_DIM", "ANGEL_RED", "TERM_ORANGE", "TERM_TEXT", "UNICODE_OK",
-               "HUD_FONT", "ENOCH")
+               "HUD_FONT", "ENOCH", "THERMAL")
 _DEFAULTS = {name: copy.deepcopy(globals()[name]) for name in _RESETTABLE}
 
 
@@ -2458,8 +2743,22 @@ def build_parser():
     ap.add_argument("--layout", default="", help="a layout file (JSON) that moves or hides HUD elements, e.g. {\"move\": {\"chat\": [0, -0.1]}, \"hide\": [\"status\"]}; the GUI can make one")
     ap.add_argument("--comments", default="", help="text file of 'username: message' lines for the comment feed")
     ap.add_argument("--no-chat", dest="chat", action="store_false", help="hide the scrolling comment feed and its backdrop; the rest of the HUD stays")
+    ap.add_argument("--hud-clock", default="", help="date and time the security/vhs clocks start at, e.g. \"1988-09-17 17:14\" (blank = now)")
     ap.add_argument("--hud-time", type=float, default=6.0, help="(still images) which second of the HUD animation to show")
     return ap
+
+
+def parse_clock(text):
+    """--hud-clock: "YYYY-MM-DD HH:MM[:SS]" or "YYYY-MM-DD" -> seconds since 1970 (blank = now)."""
+    import datetime
+    if not text:
+        return time.time()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.datetime.strptime(text.strip(), fmt).timestamp()
+        except ValueError:
+            pass
+    raise SystemExit(f"--hud-clock needs YYYY-MM-DD HH:MM, e.g. \"1988-09-17 17:14\"; got '{text}'.")
 
 
 def setup(args):
@@ -2495,6 +2794,13 @@ def setup(args):
         have_pil = False
     if (HUD_FONT["body"] or HUD_FONT["title"] or args.comments or args.emoji_font) and not have_pil:
         print("NOTE: Pillow is not installed, so custom fonts, Unicode and emoji are off (pip install pillow).")
+    if have_pil and not HUD_FONT["body"]:                 # the theme's own typeface, when installed
+        for name in THEME_FONTS.get(args.theme, []):
+            try:
+                HUD_FONT["body"] = resolve_font(name, "--hud-font")
+                break
+            except SystemExit:
+                pass
     if have_pil:
         HUD_FONT["fallback"] = HUD_FONT["body"] or first_existing(FALLBACK_FONTS)
         HUD_FONT["emoji"] = HUD_FONT["emoji"] or first_existing(EMOJI_FONTS)
@@ -2550,7 +2856,10 @@ def setup(args):
             "glyphs": glyph_styles}
     if args.hud is None:
         args.hud = args.style == "eve" or args.theme != "eve"
-    hud_cfg = {"title": clean_text(args.hud_title), "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "layout": load_layout(args.layout), "prompt": "TRANSMIT MESSAGE...",
+    look_name = args.look if args.look != "auto" else ("eve" if args.style == "eve" else "default")
+    title = THEME_LABELS.get(args.theme, args.hud_title) if args.hud_title == "LIVE STREAM" else args.hud_title
+    hud_cfg = {"title": clean_text(title), "clock0": parse_clock(args.hud_clock), "nightshot": look_name == "nightshot",
+               "vhs_title": clean_text(args.hud_tag) if args.hud_tag != "ASCENSION.exe" else "", "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "layout": load_layout(args.layout), "prompt": "TRANSMIT MESSAGE...",
                "tag": clean_text(args.hud_tag), "tagline": clean_text(args.hud_tagline), "vertical": clean_text(args.hud_vertical), "boxes": [], "lockon": args.lockon, "sigils": args.sigils, "hearts": args.hearts}
     hud_fn = HUD_THEMES[args.theme] or draw_hud
     irid_kw = dict(strength=args.irid_strength, palette=args.irid_palette, glitch=args.irid_glitch,

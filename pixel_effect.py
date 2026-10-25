@@ -103,6 +103,13 @@ LOOKS = {
                    strength=0.95, chroma=1, bloom=0.25),
     "acid": _look([(0, (10, 10, 10)), (128, (120, 120, 118)), (255, (240, 240, 236))], strength=1.0, saturation=0.0,
                   chroma=1, bloom=0.15),
+    # modern looks (pair with the modern theme)
+    "neon": dict(_look([(0, (0, 0, 0)), (90, (22, 6, 42)), (150, (120, 44, 225)), (195, (70, 205, 220)), (230, (90, 255, 120)),
+                        (255, (235, 255, 245))], strength=1.0, chroma=2, bloom=0.45), normalize=True, blur=0.8, heat_people=True),
+    "editorial": dict(_look([(0, (52, 40, 60)), (128, (150, 145, 150)), (255, (244, 242, 240))], strength=0.85,
+                            saturation=0.3, chroma=0, bloom=0.1), lift=0.05),
+    "redshift": dict(_look([(0, (0, 0, 0)), (110, (34, 2, 6)), (170, (200, 18, 30)), (220, (255, 80, 72)), (255, (255, 228, 222))],
+                           strength=1.0, chroma=1, bloom=0.4), normalize=True, heat_people=True),
 }
 
 
@@ -1309,6 +1316,8 @@ HUD_ELEMENTS = {
                  "target": (0.50, 0.40), "status": (0.06, 0.17), "readouts": (0.06, 0.78)},
     "scifi": {"frame": (0.04, 0.05), "header": (0.05, 0.04), "ruler": (0.50, 0.13), "rings": (0.50, 0.35),
               "gauges_left": (0.06, 0.30), "gauges_right": (0.94, 0.30), "chips": (0.06, 0.72), "readouts": (0.36, 0.82)},
+    "modern": {"scrim": (0.50, 0.90), "circles": (0.50, 0.40), "orbit": (0.50, 0.30), "index": (0.06, 0.06), "day": (0.94, 0.06),
+               "vertical": (0.94, 0.20), "word": (0.50, 0.74), "info": (0.06, 0.82)},
     "y2k": {"bar": (0.045, 0.14), "segments": (0.20, 0.12), "burst": (0.84, 0.12), "dots": (0.56, 0.075),
             "rules": (0.20, 0.16), "crosses": (0.55, 0.63), "icon": (0.12, 0.90), "word": (0.95, 0.95)},
 }
@@ -1917,10 +1926,12 @@ def load_overlay(path, W, H, start=0.0, key="", tolerance=60):
 # ---- Camera themes: security, vhs, thermal --------------------------------------------------------
 # These draw like real camera displays: solid text with a dark shadow straight onto the picture (no glow).
 # Sizes follow the frame's shorter side, so they fit tall phone video as well as wide video.
-THEME_LABELS = {"security": "CAM 1", "vhs": "", "thermal": "IR-7", "military": "IN LAR", "scifi": "BIOMETRIC SCAN", "y2k": "storm"}         # used when --hud-title is left at its default
+THEME_LABELS = {"security": "CAM 1", "vhs": "", "thermal": "IR-7", "military": "IN LAR", "scifi": "BIOMETRIC SCAN", "y2k": "storm",
+                "modern": "vector"}         # used when --hud-title is left at its default
 THEME_FONTS = {"security": ["Consolas", "Lucida Console"], "vhs": ["VCR OSD Mono", "Consolas"],
                "thermal": ["Bahnschrift", "Segoe UI"], "military": ["Consolas", "Lucida Console"],
-               "scifi": ["Bahnschrift", "Segoe UI"], "y2k": ["Segoe UI Semibold", "Segoe UI Bold", "Arial Bold"]}                       # used when --hud-font is not set
+               "scifi": ["Bahnschrift", "Segoe UI"], "y2k": ["Segoe UI Semibold", "Segoe UI Bold", "Arial Bold"],
+               "modern": ["Segoe UI Light", "Segoe UI Semilight", "Segoe UI"]}                       # used when --hud-font is not set
 THERMAL = {"gray": None, "stops": None}                                      # the last thermal look's heat map, for the HUD
 THERMAL_RANGE = (8.0, 37.0)                                                  # degrees C at the cold and hot ends of the scale
 
@@ -2553,9 +2564,147 @@ def draw_hud_y2k(frame, t, frac, fps, cfg):
     return out
 
 
+# ---- Modern: an editorial / Swiss-grid moving poster ---------------------------------------------------
+MODERN_LIME = (0, 255, 198)                       # BGR #c6ff00
+
+
+def solid_spaced(img, text, x, y, scale, color, thick, spacing):
+    """Letter-spaced text drawn solid (not brightened), one character at a time. Returns the end x."""
+    for ch in text:
+        if ch != " ":
+            shadow_text(img, ch, (int(x), int(y)), scale, color, thick, shadow=None)
+        x += text_w(ch if ch != " " else "n", scale, thick) + spacing
+    return x
+
+
+def spaced_width(text, scale, thick, spacing):
+    return sum(text_w(ch if ch != " " else "n", scale, thick) + spacing for ch in text) - spacing
+
+
+def draw_hud_modern(frame, t, frac, fps, cfg):
+    """A moving poster: concentric dashed rings orbiting the head with a hanging accent line, two huge faint
+    circles, a Swiss-grid label stack, vertical spaced caps, a day counter, a huge letter-spaced word and an
+    info row. Thin, solid and quiet; the accent color (--accent) carries it."""
+    out = frame.copy()
+    H, W = out.shape[:2]
+    s = _ui_scale(W, H)
+    hair = max(1, int(round(0.9 * s)))
+    A = cv2.LINE_AA
+    L = Layout("modern", cfg, W, H)
+    ACC = cfg.get("accent_bgr") or MODERN_LIME
+    paper = cfg.get("modern_paper", False)                       # editorial: dark ink on a light scrim
+    WHT, GRY = ((38, 28, 46), (110, 104, 112)) if paper else ((244, 244, 244), (165, 165, 165))
+    m = int(0.06 * min(W, H))
+    if L.show("scrim"):                                          # soft fade at top and bottom so fine print reads
+        ys = np.arange(H, dtype=np.float32) / H
+        a = np.maximum(np.clip((0.2 - ys) / 0.2, 0, 1) * 0.45, np.clip((ys - 0.68) / 0.32, 0, 1) * 0.62)[:, None, None]
+        tone = np.float32(242 if paper else 0)
+        out = (out.astype(np.float32) * (1 - a) + tone * a).astype(np.uint8)
+
+    if L.show("circles"):                                        # two huge faint circles behind everything
+        ox, oy = L.off("circles")
+        faint = out.copy()
+        for (fx, fy, fr) in ((0.15, 0.42, 0.62), (0.95, 0.38, 0.58)):
+            cv2.circle(faint, (int(fx * W) + ox, int(fy * H) + oy), int(fr * W), WHT, hair, A)
+        out = cv2.addWeighted(faint, 0.35, out, 0.65, 0)
+
+    if L.show("orbit"):                                          # concentric dashed rings on the head, like a record
+        ox, oy = L.off("orbit")
+        if cfg.get("boxes"):
+            fcx, fcy, fw, fh = cfg["boxes"][0]
+            oc, r0 = (int(fcx), int(fcy)), int(fw * 0.42)
+        elif cfg.get("body_box"):
+            bcx, bcy, bw, bh = cfg["body_box"]
+            oc, r0 = (int(bcx), int(bcy - bh * 0.3)), int(bw * 0.2)
+        else:
+            oc, r0 = (W // 2, int(0.4 * H)), int(0.12 * min(W, H))
+        oc = (oc[0] + ox, oc[1] + oy)
+        rings = out.copy()
+        rng = np.random.default_rng(19)
+        for k in range(9):
+            r = int(r0 * (1.15 + 0.22 * k))
+            speed = rng.uniform(4, 14) * (1 if k % 2 else -1)
+            start = rng.uniform(0, 360) + t * speed
+            for _ in range(int(rng.integers(3, 6))):              # a few dashes per ring, uneven like the poster
+                length = rng.uniform(15, 70)
+                cv2.ellipse(rings, oc, (r, r), 0, start, start + length, GRY, hair + (1 if k == 3 else 0), A)
+                start += length + rng.uniform(10, 60)
+        accent_r = int(r0 * (1.15 + 0.22 * 5))
+        a0 = (t * 9) % 360
+        cv2.ellipse(rings, oc, (accent_r, accent_r), 0, a0, a0 + 40, ACC, hair + 1, A)
+        out = cv2.addWeighted(rings, 0.85, out, 0.15, 0)
+        cv2.line(out, (oc[0], 0), (oc[0], oc[1] - int(r0 * 1.15)), ACC, hair + 1, A)   # the hanging line
+
+    if L.show("index"):                                          # Swiss-grid label stack, top left
+        ox, oy = L.off("index")
+        x, y = m + ox, m + int(30 * s) + oy
+        shadow_text(out, "01", (x, y), 0.95 * s, WHT, tk(0.95 * s, 1.4), shadow=None)
+        shadow_text(out, "motion study", (x, y + int(26 * s)), 0.5 * s, WHT, tk(0.5 * s, 1.2), shadow=None)
+        cv2.line(out, (x, y + int(38 * s)), (x + int(16 * s), y + int(38 * s)), WHT, hair, A)
+        for i, (lab, val) in enumerate((("SYSTEM", "visual language"), ("FORM", "procedural overlay"))):
+            yy = y + int((86 + 52 * i) * s)
+            shadow_text(out, lab, (x, yy), 0.42 * s, WHT, tk(0.42 * s, 1.3), shadow=None)
+            shadow_text(out, val, (x, yy + int(18 * s)), 0.42 * s, GRY, tk(0.42 * s), shadow=None)
+
+    if L.show("day"):                                            # day counter, top right
+        ox, oy = L.off("day")
+        dt = clock_at(cfg, t)
+        txt = f"Day _{dt.timetuple().tm_yday}"
+        sc = 0.8 * s
+        x2, y = W - m + ox, m + int(30 * s) + oy
+        shadow_text(out, txt, (x2 - text_w(txt, sc, tk(sc, 1.3)), y), sc, ACC, tk(sc, 1.3), shadow=None)
+        sub = "pixel-effect"
+        shadow_text(out, sub, (x2 - text_w(sub, 0.45 * s, tk(0.45 * s)), y + int(22 * s)), 0.45 * s, ACC, tk(0.45 * s), shadow=None)
+
+    if L.show("vertical"):                                       # vertical spaced caps down the right edge
+        ox, oy = L.off("vertical")
+        txt = cfg.get("modern_vertical") or "A MOVING POSTER PRESENTATION"
+        sc = 0.45 * s
+        tmp = np.zeros((int(40 * s), int(spaced_width(txt, sc, tk(sc), 6 * s)) + int(20 * s), 3), np.uint8)
+        spaced_text(tmp, txt, (int(4 * s), int(28 * s)), sc, (255, 255, 255), tk(sc), 6 * s)
+        rot = cv2.rotate(tmp, cv2.ROTATE_90_CLOCKWISE)
+        h, w = rot.shape[:2]
+        x0, y0 = W - m - w + ox, int(0.2 * H) + oy
+        x1, y1 = min(W, x0 + w), min(H, y0 + h)
+        if x1 > max(0, x0) and y1 > max(0, y0):
+            mk = rot[max(0, y0) - y0:y1 - y0, max(0, x0) - x0:x1 - x0, :1].astype(np.float32) / 255.0
+            reg = out[max(0, y0):y1, max(0, x0):x1].astype(np.float32)
+            out[max(0, y0):y1, max(0, x0):x1] = (reg * (1 - mk) + np.array(WHT, np.float32) * mk).astype(np.uint8)
+
+    if L.show("word"):                                           # huge thin letter-spaced word, lower third
+        ox, oy = L.off("word")
+        word = cfg["title"].upper()
+        sc, thick = 2.6 * s, max(1, int(round(1.6 * s)))
+        spacing = 0.5 * text_w("N", sc, thick)
+        width = spaced_width(word, sc, thick, spacing)
+        if width > W - 2 * m:                                    # fit the frame
+            k = (W - 2 * m) / width
+            sc, spacing = sc * k, spacing * k
+            thick = max(1, int(round(thick * k)))
+            width = spaced_width(word, sc, thick, spacing)
+        solid_spaced(out, word, (W - width) / 2 + ox, int(0.74 * H) + oy, sc, WHT, thick, spacing)
+
+    if L.show("info"):                                           # info row: rule, three label/value columns, fine print
+        ox, oy = L.off("info")
+        y = int(0.82 * H) + oy
+        cv2.line(out, (m + ox, y), (W - m + ox, y), GRY, hair, A)
+        dt = clock_at(cfg, t)
+        cols = (("Headline", cfg["title"].lower()), ("Platform", "moving image"), ("Date", dt.strftime("%b %d, %Y").replace(" 0", " ")))
+        cw = (W - 2 * m) / 3
+        for i, (lab, val) in enumerate(cols):
+            x = int(m + i * cw) + ox
+            cv2.circle(out, (x + int(3 * s), y + int(22 * s)), max(2, int(2.5 * s)), ACC, -1, A)
+            shadow_text(out, lab, (x + int(12 * s), y + int(27 * s)), 0.4 * s, GRY, tk(0.4 * s), shadow=None)
+            shadow_text(out, val, (x, y + int(52 * s)), 0.55 * s, WHT, tk(0.55 * s, 1.4), shadow=None)
+        cv2.line(out, (m + ox, y + int(70 * s)), (W - m + ox, y + int(70 * s)), GRY, hair, A)
+        shadow_text(out, f"Generated with pixel-effect. Frame {int(t * fps):05d}  /  {fps:.0f} fps.",
+                    (m + ox, y + int(92 * s)), 0.38 * s, GRY, tk(0.38 * s), shadow=None)
+    return out
+
+
 HUD_THEMES = {"eve": None, "angelcore": draw_hud_angelcore, "terminal": draw_hud_terminal,
               "security": draw_hud_security, "vhs": draw_hud_vhs, "thermal": draw_hud_thermal,
-              "military": draw_hud_military, "scifi": draw_hud_scifi, "y2k": draw_hud_y2k}
+              "military": draw_hud_military, "scifi": draw_hud_scifi, "y2k": draw_hud_y2k, "modern": draw_hud_modern}
 
 
 def ascii_safe(text):
@@ -2994,7 +3143,7 @@ def build_parser():
                     help="base dissolve: square blocks, a hex lattice of dots, a growing blur, or nothing (use with --ripple or --moire)")
     ap.add_argument("--look", choices=["auto"] + list(LOOKS), default="auto",
                     help="color look: auto = eve with --style eve, otherwise default; or rose, gold, teal, ember, vapor, noir; "
-                         "camera looks cctv, vhs, nightshot, thermal, thermal-iron; graphic looks tactical, chrome, lilac, acid")
+                         "camera looks cctv, vhs, nightshot, thermal, thermal-iron; graphic looks tactical, chrome, lilac, acid; modern looks neon, editorial, redshift")
     ap.add_argument("--tone-shadows", default="", help="your own tone: color for the darkest parts, #RRGGBB (replaces the look's colors; default black)")
     ap.add_argument("--tone-mids", default="", help="your own tone: color for the midtones (default: halfway between shadows and highlights)")
     ap.add_argument("--tone-highlights", default="", help="your own tone: color for the brightest parts (default white)")
@@ -3239,6 +3388,8 @@ def setup(args):
     title = THEME_LABELS.get(args.theme, args.hud_title) if args.hud_title == "LIVE STREAM" else args.hud_title
     hud_cfg = {"title": clean_text(title), "clock0": parse_clock(args.hud_clock), "nightshot": look_name == "nightshot",
                "accent_bgr": parse_color(args.accent) if args.accent else None,
+               "modern_vertical": clean_text(args.hud_vertical) if args.hud_vertical != "SYSTEM ANGEL // ONLINE" else "",
+               "modern_paper": look_name == "editorial",
                "hud_bgr": parse_color(args.hud_color) if args.hud_color else None,
                "vhs_title": clean_text(args.hud_tag) if args.hud_tag != "ASCENSION.exe" else "", "comments": load_comments(args.comments) if args.chat else [], "chat": args.chat, "layout": load_layout(args.layout), "prompt": "TRANSMIT MESSAGE...",
                "tag": clean_text(args.hud_tag), "tagline": clean_text(args.hud_tagline), "vertical": clean_text(args.hud_vertical), "boxes": [], "lockon": args.lockon, "sigils": args.sigils, "hearts": args.hearts}

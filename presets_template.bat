@@ -24,7 +24,7 @@ rem   --style   default | eve   (eve = ice-blue look plus digits, smear, particl
 rem   --mode    blocks | halftone | blur | none
 rem   --look    auto | default | eve | rose | gold | teal | ember | vapor | noir   (auto = eve with --style eve)
 rem             camera looks: cctv | vhs | nightshot | thermal | thermal-iron
-rem             graphic looks: tactical | chrome | lilac | acid
+rem             graphic looks: tactical | chrome | lilac | acid      modern looks: neon | editorial | redshift
 rem   --tone-shadows / --tone-mids / --tone-highlights   your own colors, dark to light, #RRGGBB ("" = the look's)
 rem   --tone-strength  0..1 how much the tone replaces the original colors (-1 = the look's own)
 rem   --wash           a flat color over everything, #RRGGBB ("" = none)
@@ -34,7 +34,7 @@ rem   switches: --no-grade   (skip the color look)
 set LOOK=--style default --mode blocks --look auto --tone-shadows "" --tone-mids "" --tone-highlights "" --tone-strength -1 --wash "" --wash-opacity 0.3 --wash-blend softlight
 
 rem ---- HUD: the live-stream overlay
-rem   --theme       eve | angelcore | terminal | security | vhs | thermal | military | scifi | y2k
+rem   --theme       eve | angelcore | terminal | security | vhs | thermal | military | scifi | y2k | modern
 rem   --accent      hearts, lock-on boxes, LIVE badge: #RRGGBB or R,G,B ("" = theme default)
 rem   --hud-color   main HUD text and lines: #RRGGBB or R,G,B ("" = theme default)
 rem   --hud-tag     (angelcore) small tag under the title

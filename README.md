@@ -85,6 +85,31 @@ Or double-click `gui.bat` on Windows. It opens in your browser and runs only on 
 A single-frame preview can't show effects that build up over time (echo trails, mask smoothing);
 use a draft render for those.
 
+## Color looks, tone and wash
+
+- `--look` picks a ready-made color look: `default`, `eve`, `rose`, `gold`, `teal`, `ember`, `vapor`, `noir`.
+- `--tone-shadows`, `--tone-mids`, `--tone-highlights` (colors, dark to light) build your own look;
+  `--tone-strength` sets how much it replaces the original colors.
+- `--hue-shift`, `--saturation`, `--bloom`, `--chroma-shift` fine-tune any look.
+- `--wash "#ff3fa4" --wash-opacity 0.3 --wash-blend softlight` lays a flat color over everything.
+
+In the GUI every color option has a color wheel.
+
+## Fonts
+
+Font options take an installed font's **name** (`--hud-font "Segoe UI Bold"`), a font file name, or a
+path. Fonts you don't want to install can go in `fonts\`. In the GUI, font options are searchable
+dropdowns of everything installed.
+
+## Video overlays
+
+`--overlay` also takes a video (MP4, MOV...). It plays in sync with your clip and loops if shorter.
+Videos have no transparency, so pick how it mixes in:
+
+- `--overlay-blend screen` or `add`: black becomes see-through (light leaks, dust, sparks, particles).
+- `--overlay-key "#00ff00"`: one color becomes see-through (green screen); `--overlay-key-tolerance` tunes it.
+- `--overlay-start 2.5` starts the overlay video 2.5 s in.
+
 ## Running the script directly (any OS)
 
 ```bash

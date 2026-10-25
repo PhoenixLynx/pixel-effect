@@ -40,7 +40,7 @@ _FONTS = [("Fonts", "*.ttf *.otf *.ttc")]
 _IMAGES = [("Images", "*.png *.jpg *.jpeg *.webp *.bmp")]
 PATH_FIELDS = {"--comments": ([("Text", "*.txt")], "open"), "--hud-font": (_FONTS, "open"), "--hud-title-font": (_FONTS, "open"),
                "--emoji-font": (_FONTS, "open"), "--enochian-font": (_FONTS, "open"), "--sigil-font": (_FONTS, "open"),
-               "--sigil-image": ([("PNG", "*.png")], "many"), "--overlay": ([("PNG", "*.png")], "open"),
+               "--sigil-image": ([("PNG", "*.png")], "many"), "--overlay": ([("PNG or video", "*.png *.mp4 *.mov *.avi *.mkv *.webm *.m4v")], "open"),
                "--bg-image": (_IMAGES, "open"), "--bg-replace": (_IMAGES, "open"), "--seg-model": ([("ONNX model", "*.onnx")], "open"),
                "--yunet-model": ([("ONNX model", "*.onnx")], "open"), "--mask-video": ([("MP4 video", "*.mp4")], "save"),
                "INPUT": ([("Video or image", "*.mp4 *.mov *.avi *.mkv *.webm *.png *.jpg *.jpeg *.webp *.bmp")], "open"),

@@ -8,11 +8,17 @@ rem ======================================================================
 
 set SCRIPT=pixel_effect.py
 
-rem ---- LOOK: overall style and the base dissolve
+rem ---- LOOK: overall style, the base dissolve, and the color look
 rem   --style   default | eve   (eve = ice-blue look plus digits, smear, particles)
 rem   --mode    blocks | halftone | blur | none
+rem   --look    auto | default | eve | rose | gold | teal | ember | vapor | noir   (auto = eve with --style eve)
+rem   --tone-shadows / --tone-mids / --tone-highlights   your own colors, dark to light, #RRGGBB ("" = the look's)
+rem   --tone-strength  0..1 how much the tone replaces the original colors (-1 = the look's own)
+rem   --wash           a flat color over everything, #RRGGBB ("" = none)
+rem   --wash-opacity   0..1     --wash-blend  normal | multiply | screen | overlay | softlight
+rem   optional, add to the line to override the look:  --hue-shift 20  --saturation 1.2  --bloom 0.3  --chroma-shift 2
 rem   switches: --no-grade   (skip the color look)
-set LOOK=--style eve --mode blocks
+set LOOK=--style eve --mode blocks --look auto --tone-shadows "" --tone-mids "" --tone-highlights "" --tone-strength -1 --wash "" --wash-opacity 0.3 --wash-blend softlight
 
 rem ---- HUD: the live-stream overlay
 rem   --theme       eve | angelcore | terminal
@@ -27,6 +33,7 @@ rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
 set HUD=--theme terminal --accent "#ff7a1a" --hud-color "#9dffb0" --hud-title "LIVE STREAM" --hud-tag "ASCENSION.exe" --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
+rem   any font option takes an installed font's name ("Segoe UI Bold") or a file path
 rem   --hud-text-scale   all HUD text (1.3 = 30% bigger)
 rem   --hud-title-scale  extra size for the big title only; stacks with the above
 set FONTS=--hud-font "" --hud-title-font "" --emoji-font "" --hud-text-scale 0.8 --hud-title-scale 1.0
@@ -98,9 +105,13 @@ rem   --bg-image      photo of the empty scene ("" = estimated from the video)
 rem   --bg-threshold  0..255, lower catches more (including shadows)
 set BG=--background blur --bg-color "#000000" --bg-replace "" --bg-image "" --bg-threshold 28
 
-rem ---- OVERLAY: your own PNG artwork over the video
-rem   --overlay-blend  normal | screen (black becomes see-through)
-set OVERLAY=--overlay "" --overlay-opacity 1.0 --overlay-blend normal
+rem ---- OVERLAY: your own artwork over the video: a PNG, or a video that plays in sync and loops
+rem   --overlay-blend  normal | screen (black becomes see-through) | add (brighter, for light leaks)
+rem   video overlays have no transparency: use screen/add for art on black, or --overlay-key for one color
+rem   --overlay-start  seconds into the overlay video to begin
+rem   --overlay-key    #RRGGBB that becomes see-through (e.g. #00ff00 green screen; "" = none)
+rem   --overlay-key-tolerance  0..255 how close to the key counts
+set OVERLAY=--overlay "" --overlay-opacity 1.0 --overlay-blend normal --overlay-start 0.0 --overlay-key "" --overlay-key-tolerance 60
 
 rem ---- CROP: keep only x0,y0,x1,y1 as fractions ("" = whole frame)
 set CROP=--crop 0.05,0.02,0.95,0.98

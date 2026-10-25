@@ -1688,12 +1688,65 @@ def composite_overlay(frame, overlay, opacity, blend):
     f = frame.astype(np.float32)
     if blend == "screen":
         mixed = 255 - (255 - f) * (255 - rgb) / 255.0
+    elif blend == "add":                                  # light leaks, sparks: brightens, black adds nothing
+        mixed = f + rgb
     else:
         mixed = rgb
     return np.clip(f * (1 - a) + mixed * a, 0, 255).astype(np.uint8)
 
 
-def load_overlay(path, W, H):
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
+
+class OverlayClip:
+    """A video used as --overlay. It plays in sync with your clip and loops when it is shorter.
+    Videos carry no transparency, so either use --overlay-blend screen/add (black becomes see-through, how most
+    light-leak, dust and particle packs are made) or --overlay-key (one color, e.g. green screen, becomes see-through)."""
+
+    def __init__(self, path, W, H, start=0.0, key="", tolerance=60):
+        self.cap = cv2.VideoCapture(path)
+        if not self.cap.isOpened():
+            raise SystemExit(f"Could not open --overlay video {path}")
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 24.0
+        self.count = max(1, int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+        self.size, self.start, self.tolerance = (W, H), start, max(1, tolerance)
+        self.key = np.array(parse_color(key), np.float32) if key else None
+        self.pos, self.cached = -1, None
+
+    def frame(self, t):
+        """BGRA overlay frame for second t of the main clip."""
+        i = int(round((t + self.start) * self.fps)) % self.count
+        if i == self.pos:
+            return self.cached
+        if i != self.pos + 1:                              # reading on is fast; jumping (looping, previews) seeks
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+        ok, f = self.cap.read()
+        if not ok:                                         # frame count from the file was wrong: loop from the start
+            self.count = max(1, i)
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, f = self.cap.read()
+            i = 0
+            if not ok:
+                raise SystemExit("Could not read the --overlay video.")
+        self.pos = i
+        if (f.shape[1], f.shape[0]) != self.size:
+            f = cv2.resize(f, self.size, interpolation=cv2.INTER_AREA)
+        alpha = np.full(f.shape[:2], 255, np.uint8)
+        if self.key is not None:                           # soft key: fully clear near the color, fading out beyond it
+            dist = np.abs(f.astype(np.float32) - self.key).max(axis=2)
+            alpha = (np.clip((dist - self.tolerance) / (0.5 * self.tolerance), 0, 1) * 255).astype(np.uint8)
+        self.cached = np.dstack([f, alpha])
+        return self.cached
+
+
+def overlay_at(overlay, t):
+    """The overlay to draw at second t: a still PNG as is, a video's matching frame."""
+    return overlay.frame(t) if isinstance(overlay, OverlayClip) else overlay
+
+
+def load_overlay(path, W, H, start=0.0, key="", tolerance=60):
+    if os.path.splitext(path)[1].lower() in VIDEO_EXTS:
+        return OverlayClip(path, W, H, start, key, tolerance)
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise SystemExit(f"Could not read --overlay {path}")
@@ -2016,7 +2069,7 @@ def build_parser():
     ap.add_argument("--tone-shadows", default="", help="your own tone: color for the darkest parts, #RRGGBB (replaces the look's colors; default black)")
     ap.add_argument("--tone-mids", default="", help="your own tone: color for the midtones (default: halfway between shadows and highlights)")
     ap.add_argument("--tone-highlights", default="", help="your own tone: color for the brightest parts (default white)")
-    ap.add_argument("--tone-strength", type=float, default=-1, help="0..1 how much the tone replaces the original colors (-1 = the look's own; 0.8 once you set tone colors)")
+    ap.add_argument("--tone-strength", type=float, default=-1.0, help="0..1 how much the tone replaces the original colors (-1 = the look's own; 0.8 once you set tone colors)")
     ap.add_argument("--hue-shift", type=float, default=None, help="rotate all colors, degrees -180..180 (blank = the look's own)")
     ap.add_argument("--saturation", type=float, default=None, help="color intensity: 1 = unchanged, 0 = gray, 1.5 = vivid (blank = the look's own)")
     ap.add_argument("--bloom", type=float, default=None, help="glow around bright areas, 0 = off, 0.3 = soft (blank = the look's own)")
@@ -2090,10 +2143,15 @@ def build_parser():
     ap.add_argument("--hud-tag", default="ASCENSION.exe", help="(angelcore) small tag under the title")
     ap.add_argument("--hud-tagline", default="SERVE / PROTECT / SILENT", help="(angelcore) small spaced caps centered across the top")
     ap.add_argument("--hud-vertical", default="SYSTEM ANGEL // ONLINE", help="(angelcore) text running up the right edge")
-    ap.add_argument("--overlay", default="", help="your own artwork: a PNG with transparency, drawn over the video (resized to fit)")
+    ap.add_argument("--overlay", default="", help="your own artwork over the video (resized to fit): a PNG with transparency, "
+                                                  "or a video (MP4, MOV...) that plays in sync and loops")
     ap.add_argument("--overlay-opacity", type=float, default=1.0, help="0..1")
-    ap.add_argument("--overlay-blend", choices=["normal", "screen"], default="normal",
-                    help="normal = alpha blend; screen = black becomes see-through, good for glowing art")
+    ap.add_argument("--overlay-start", type=float, default=0.0, help="(video overlay) start this many seconds into the overlay video")
+    ap.add_argument("--overlay-key", default="", help="(video overlay) this color becomes see-through, e.g. #00ff00 for green screen")
+    ap.add_argument("--overlay-key-tolerance", type=int, default=60, help="(video overlay) how close to the key color counts as see-through, 0..255")
+    ap.add_argument("--overlay-blend", choices=["normal", "screen", "add"], default="normal",
+                    help="normal = alpha blend (PNG transparency, --overlay-key); screen = black becomes see-through, good for glowing art; "
+                         "add = brighter still, for light leaks and sparks")
     ap.add_argument("--smear", action="store_true", help="horizontal pixel-stretch glitch")
     ap.add_argument("--particles", action="store_true", help="particle burst from the head")
     ap.add_argument("--period", type=float, default=4.0, help="seconds per dissolve-and-reform cycle")
@@ -2295,7 +2353,8 @@ def render_still(frame, args, ctx, bg=None):
     if args.hud:
         frame = hud_fn(frame, args.hud_time, args.progress, 24.0, hud_cfg)
     if args.overlay:
-        frame = composite_overlay(frame, load_overlay(args.overlay, frame.shape[1], frame.shape[0]), args.overlay_opacity, args.overlay_blend)
+        ov = load_overlay(args.overlay, frame.shape[1], frame.shape[0], args.overlay_start, args.overlay_key, args.overlay_key_tolerance)
+        frame = composite_overlay(frame, overlay_at(ov, args.hud_time), args.overlay_opacity, args.overlay_blend)
     if fx_on and args.fx_over_hud:
         frame = screen_fx(frame, args.hud_time, args.rgb_split, args.wobble, args.scanlines)
     return frame
@@ -2341,7 +2400,7 @@ def render_video(args, ctx):
             raise SystemExit("--mask-video needs --target body (or both) or a --background mode, which compute the mask.")
         mask_writer = cv2.VideoWriter(args.mask_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
     if args.overlay:
-        overlay = load_overlay(args.overlay, W, H)
+        overlay = load_overlay(args.overlay, W, H, args.overlay_start, args.overlay_key, args.overlay_key_tolerance)
     names = ["detect", "head effect", "color grade", "HUD", "read+write"]
     spent = dict.fromkeys(names, 0.0)
     tracker = FaceTracker(args.max_faces, args.hold, args.confirm)
@@ -2409,7 +2468,7 @@ def render_video(args, ctx):
         if args.hud:
             frame = hud_fn(frame, idx / fps, idx / total, fps, hud_cfg)
         if overlay is not None:
-            frame = composite_overlay(frame, overlay, args.overlay_opacity, args.overlay_blend)
+            frame = composite_overlay(frame, overlay_at(overlay, t), args.overlay_opacity, args.overlay_blend)
         if fx_on and args.fx_over_hud:
             frame = screen_fx(frame, t, args.rgb_split, args.wobble, args.scanlines)
         spent["HUD"] += time.perf_counter() - t0

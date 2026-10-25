@@ -116,9 +116,13 @@ rem   --bg-image      photo of the empty scene ("" = estimated from the video)
 rem   --bg-threshold  0..255, lower catches more (including shadows)
 set BG=--background keep --bg-color "#000000" --bg-replace "" --bg-image "" --bg-threshold 28
 
-rem ---- OVERLAY: your own PNG artwork over the video
-rem   --overlay-blend  normal | screen (black becomes see-through)
-set OVERLAY=--overlay "" --overlay-opacity 1.0 --overlay-blend normal
+rem ---- OVERLAY: your own artwork over the video: a PNG, or a video that plays in sync and loops
+rem   --overlay-blend  normal | screen (black becomes see-through) | add (brighter, for light leaks)
+rem   video overlays have no transparency: use screen/add for art on black, or --overlay-key for one color
+rem   --overlay-start  seconds into the overlay video to begin
+rem   --overlay-key    #RRGGBB that becomes see-through (e.g. #00ff00 green screen; "" = none)
+rem   --overlay-key-tolerance  0..255 how close to the key counts
+set OVERLAY=--overlay "" --overlay-opacity 1.0 --overlay-blend normal --overlay-start 0.0 --overlay-key "" --overlay-key-tolerance 60
 
 rem ---- CROP: keep only x0,y0,x1,y1 as fractions ("" = whole frame)
 set CROP=--crop ""

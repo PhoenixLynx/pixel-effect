@@ -19,11 +19,17 @@ rem ======================================================================
 
 set SCRIPT=pixel_effect.py
 
-rem ---- LOOK: overall style and the base dissolve
+rem ---- LOOK: overall style, the base dissolve, and the color look
 rem   --style   default | eve   (eve = ice-blue look plus digits, smear, particles)
 rem   --mode    blocks | halftone | blur | none
+rem   --look    auto | default | eve | rose | gold | teal | ember | vapor | noir   (auto = eve with --style eve)
+rem   --tone-shadows / --tone-mids / --tone-highlights   your own colors, dark to light, #RRGGBB ("" = the look's)
+rem   --tone-strength  0..1 how much the tone replaces the original colors (-1 = the look's own)
+rem   --wash           a flat color over everything, #RRGGBB ("" = none)
+rem   --wash-opacity   0..1     --wash-blend  normal | multiply | screen | overlay | softlight
+rem   optional, add to the line to override the look:  --hue-shift 20  --saturation 1.2  --bloom 0.3  --chroma-shift 2
 rem   switches: --no-grade   (skip the color look)
-set LOOK=--style default --mode blocks
+set LOOK=--style default --mode blocks --look auto --tone-shadows "" --tone-mids "" --tone-highlights "" --tone-strength -1 --wash "" --wash-opacity 0.3 --wash-blend softlight
 
 rem ---- HUD: the live-stream overlay
 rem   --theme       eve | angelcore | terminal

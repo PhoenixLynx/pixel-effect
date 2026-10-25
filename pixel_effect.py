@@ -64,6 +64,43 @@ LOOK_EVE = {
     "gradient_strength": 0.8,
 }
 
+def _look(stops, strength=0.8, saturation=1.0, chroma=2, bloom=0.25, scanlines=0.0):
+    return {"hue_shift": 0, "saturation": saturation, "chroma_shift": chroma, "bloom": bloom, "scanlines": scanlines,
+            "posterize": 0, "gradient_stops": stops, "gradient_strength": strength}
+
+
+# Ready-made looks for --look. Each is a gradient map (dark -> light, RGB) plus a few finishing touches;
+# --tone-* and the adjustment options below override any part of them.
+LOOKS = {
+    "default": LOOK_DEFAULT,
+    "eve": LOOK_EVE,
+    "rose": _look([(0, (18, 4, 14)), (80, (96, 38, 72)), (150, (196, 110, 140)), (210, (240, 190, 205)), (255, (255, 240, 245))]),
+    "gold": _look([(0, (10, 6, 0)), (80, (90, 52, 10)), (150, (196, 140, 52)), (210, (240, 214, 150)), (255, (255, 248, 225))]),
+    "teal": _look([(0, (0, 10, 14)), (80, (10, 64, 72)), (150, (48, 140, 140)), (210, (170, 225, 214)), (255, (240, 255, 250))]),
+    "ember": _look([(0, (8, 0, 0)), (70, (90, 10, 8)), (140, (200, 60, 20)), (200, (250, 160, 60)), (255, (255, 240, 200))], bloom=0.35),
+    "vapor": _look([(0, (10, 4, 30)), (80, (70, 20, 110)), (150, (200, 60, 170)), (210, (120, 220, 240)), (255, (235, 250, 255))], bloom=0.3),
+    "noir": _look([(0, (0, 0, 0)), (60, (20, 20, 22)), (150, (130, 130, 135)), (255, (250, 250, 250))],
+                  strength=1.0, saturation=0.0, chroma=0, bloom=0.3, scanlines=0.08),
+}
+
+
+def color_wash(frame, bgr, opacity, blend):
+    """A flat color laid over the whole frame: normal, multiply, screen, overlay or softlight."""
+    f = frame.astype(np.float32) / 255.0
+    c = np.array(bgr, np.float32).reshape(1, 1, 3) / 255.0
+    if blend == "multiply":
+        m = f * c
+    elif blend == "screen":
+        m = 1 - (1 - f) * (1 - c)
+    elif blend == "overlay":
+        m = np.where(f < 0.5, 2 * f * c, 1 - 2 * (1 - f) * (1 - c))
+    elif blend == "softlight":
+        m = (1 - 2 * c) * f * f + 2 * c * f
+    else:
+        m = np.broadcast_to(c, f.shape)
+    return np.clip((f * (1 - opacity) + m * opacity) * 255, 0, 255).astype(np.uint8)
+
+
 DIGIT_BGR = (220, 240, 110)                       # mint-cyan digits
 PARTICLE_BGR = [(224, 204, 217), (255, 255, 255), (230, 160, 190), (220, 230, 160)]
 
@@ -820,7 +857,7 @@ def parse_color(text):
             r, g, b = (int(v) for v in text.split(","))
         return (b, g, r)
     except ValueError:
-        raise SystemExit("--bg-color needs #RRGGBB (e.g. #0a0e1a) or R,G,B (e.g. 10,14,26).")
+        raise SystemExit(f"Colors need #RRGGBB (e.g. #0a0e1a) or R,G,B (e.g. 10,14,26); got '{text}'.")
 
 
 def replace_background(frame, mask, mode, color=(0, 0, 0), image=None):
@@ -929,6 +966,8 @@ def grade(frame, look):
     if look["posterize"]:
         n = int(look["posterize"])
         out = (np.round(out / 255.0 * (n - 1)) / (n - 1) * 255).astype(np.uint8)
+    if look.get("wash"):
+        out = color_wash(out, *look["wash"])
     if look["scanlines"]:
         out = out.astype(np.float32)
         out[::3] *= 1 - look["scanlines"]
@@ -1972,6 +2011,20 @@ def build_parser():
                     help="'eve' = ice-blue look plus digits, smear and particles")
     ap.add_argument("--mode", choices=["blocks", "halftone", "blur", "none"], default="blocks",
                     help="base dissolve: square blocks, a hex lattice of dots, a growing blur, or nothing (use with --ripple or --moire)")
+    ap.add_argument("--look", choices=["auto"] + list(LOOKS), default="auto",
+                    help="color look: auto = eve with --style eve, otherwise default; or rose, gold, teal, ember, vapor, noir")
+    ap.add_argument("--tone-shadows", default="", help="your own tone: color for the darkest parts, #RRGGBB (replaces the look's colors; default black)")
+    ap.add_argument("--tone-mids", default="", help="your own tone: color for the midtones (default: halfway between shadows and highlights)")
+    ap.add_argument("--tone-highlights", default="", help="your own tone: color for the brightest parts (default white)")
+    ap.add_argument("--tone-strength", type=float, default=-1, help="0..1 how much the tone replaces the original colors (-1 = the look's own; 0.8 once you set tone colors)")
+    ap.add_argument("--hue-shift", type=float, default=None, help="rotate all colors, degrees -180..180 (blank = the look's own)")
+    ap.add_argument("--saturation", type=float, default=None, help="color intensity: 1 = unchanged, 0 = gray, 1.5 = vivid (blank = the look's own)")
+    ap.add_argument("--bloom", type=float, default=None, help="glow around bright areas, 0 = off, 0.3 = soft (blank = the look's own)")
+    ap.add_argument("--chroma-shift", type=int, default=None, help="red/blue split in pixels, 0 = off (blank = the look's own)")
+    ap.add_argument("--wash", default="", help="a flat color laid over the whole picture, #RRGGBB (blank = none)")
+    ap.add_argument("--wash-opacity", type=float, default=0.3, help="0..1 how strong the --wash color is")
+    ap.add_argument("--wash-blend", choices=["normal", "multiply", "screen", "overlay", "softlight"], default="softlight",
+                    help="how the wash mixes in: softlight/overlay tint gently, multiply darkens, screen brightens, normal paints over")
     ap.add_argument("--ripple", action="store_true", help="rings of distortion travel outward from the head's center")
     ap.add_argument("--moire", action="store_true", help="drifting interference bands (a periodic structure) across the head")
     ap.add_argument("--iridescent", action="store_true",
@@ -2126,7 +2179,20 @@ def setup(args):
     else:
         cascade = load_cascade()
     det_kw = dict(detector=args.detector, region=region, skin_min=args.skin_min, rank=args.rank)
-    look = LOOK_EVE if args.style == "eve" else LOOK_DEFAULT
+    look = copy.deepcopy(LOOKS[args.look if args.look != "auto" else ("eve" if args.style == "eve" else "default")])
+    rgb = lambda c: parse_color(c)[::-1]                 # gradient stops are RGB; parse_color gives BGR
+    if args.tone_shadows or args.tone_mids or args.tone_highlights:
+        lo = rgb(args.tone_shadows) if args.tone_shadows else (0, 0, 0)
+        hi = rgb(args.tone_highlights) if args.tone_highlights else (255, 255, 255)
+        mid = rgb(args.tone_mids) if args.tone_mids else tuple((a + b) // 2 for a, b in zip(lo, hi))
+        look["gradient_stops"], look["gradient_strength"] = [(0, lo), (128, mid), (255, hi)], 0.8
+    if args.tone_strength >= 0:
+        look["gradient_strength"] = min(1.0, args.tone_strength)
+    for key, value in (("hue_shift", args.hue_shift), ("saturation", args.saturation), ("bloom", args.bloom), ("chroma_shift", args.chroma_shift)):
+        if value is not None:
+            look[key] = value
+    if args.wash:
+        look["wash"] = (parse_color(args.wash), min(1.0, max(0.0, args.wash_opacity)), args.wash_blend)
     if args.style == "eve":
         args.digits = args.smear = args.particles = True
     if args.accent:

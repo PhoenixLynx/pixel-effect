@@ -95,11 +95,17 @@ def split_flags(value):
 
 def template_groups():
     """flag -> group name, from the set lines and 'switches:' comments of presets_template.bat."""
-    groups, pending = {}, []
+    groups, pending, mentioned = {}, [], []
     for line in TEMPLATE.read_text().splitlines():
         if line.strip().lower().startswith("rem") and "switches:" in line:
             pending += [t for t in line.split("switches:")[1].split() if t.startswith("--")]
+        elif line.strip().lower().startswith("rem"):          # options only described in comments (e.g. --hue-shift)
+            mentioned += re.findall(r"--[a-z][a-z0-9-]*", line)
         m = SET_RE.match(line)
+        if m:
+            for flag in mentioned:
+                groups.setdefault(flag, m.group(1).upper())
+            mentioned = []
         if m and m.group(1).upper() == "DRAFT":         # DRAFT repeats FULL's flags; the render buttons handle it
             pending = []
         elif m:
@@ -289,6 +295,8 @@ def group_line(group, current):
             switches += [spec.flag] if v else []
         elif spec.kind == "tri":
             switches += spec.to_argv(v)
+        elif v is None:                                  # optional numbers left blank: not written (the look decides)
+            continue
         else:
             if spec.kind == "number" and spec.action.type is int:
                 v = int(round(v))
@@ -363,6 +371,18 @@ def run_render(src, out, draft_line, draft, *values):
 # ---------------------------------------------------------------- the page
 
 FONT_FLAGS = {"--hud-font", "--hud-title-font", "--emoji-font", "--sigil-font", "--enochian-font"}
+COLOR_FLAGS = {"--accent", "--hud-color", "--echo-color", "--bg-color", "--tone-shadows", "--tone-mids", "--tone-highlights",
+               "--wash", "--overlay-key"}
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def to_hex(value):
+    """The color picker can report '#rrggbb', '#rrggbbaa' or 'rgba(r, g, b, a)'; presets store '#rrggbb'."""
+    v = (value or "").strip()
+    m = re.match(r"rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)", v)
+    if m:
+        return "#" + "".join(f"{min(255, round(float(x))):02x}" for x in m.groups())
+    return v[:7].lower() if re.match(r"^#[0-9a-fA-F]{6}", v) else v
 
 
 def font_choices():
@@ -400,7 +420,7 @@ def build_app():
                 with gr.Row():
                     preset = gr.Dropdown(preset_names(), label="Preset", scale=3)
                     load_btn = gr.Button("Load preset", scale=1)
-                controls, browse_buttons = {}, []
+                controls, browse_buttons, pickers = {}, [], []
                 groups = [g for g in GROUP_ORDER + ["OTHER"] if any(s.group == g for s in SPECS)]
                 for g in groups:
                     with gr.Accordion(GROUP_TITLES.get(g, g), open=g in ("LOOK", "HUD")):
@@ -409,6 +429,11 @@ def build_app():
                                 with gr.Row():
                                     controls[spec.flag] = control_for(spec)
                                     browse_buttons.append((spec.flag, gr.Button("Browse…", scale=0, min_width=100)))
+                            elif spec.flag in COLOR_FLAGS:        # the hex box holds the value; the wheel fills it in
+                                with gr.Row():
+                                    controls[spec.flag] = control_for(spec)
+                                    pickers.append((spec.flag, gr.ColorPicker(value=spec.default if HEX_RE.match(spec.default or "") else "#000000",
+                                                                              label="pick", scale=0, min_width=80)))
                             else:
                                 controls[spec.flag] = control_for(spec)
                 with gr.Accordion("Save as preset", open=False):
@@ -463,6 +488,10 @@ def build_app():
         upload.change(lambda f: f or gr.skip(), upload, src)
         for flag, btn in browse_buttons:
             btn.click(lambda cur, f=flag: browse(f, cur), controls[flag], controls[flag])
+        for flag, picker in pickers:
+            box = controls[flag]
+            picker.input(to_hex, picker, box)                                  # wheel -> hex box (and so the preview)
+            box.change(lambda v: to_hex(v) if HEX_RE.match(to_hex(v)) else gr.skip(), box, picker)   # typed/loaded hex -> wheel
         src_browse.click(lambda cur: browse("INPUT", cur), src, src)
         out_browse.click(lambda cur: browse("OUTPUT", cur), out_path, out_path)
         src.change(clip_length, src, t_slider).then(maybe_preview, [live, src, t_slider, width] + values, **preview_io)

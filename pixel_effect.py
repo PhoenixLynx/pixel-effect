@@ -1033,6 +1033,7 @@ DEFAULT_COMMENTS = [
     ("glitchgarden", "how did you make this"), ("nightowl", "love this so much"),
 ]
 HUD_TEXT_SCALE = 1.0   # set by --hud-text-scale
+HUD_SUBS = None        # (pattern, {old: new}) from --hud-text, applied to every piece of HUD text
 TITLE_SCALE = 1.0      # set by --hud-title-scale (extra size for the big title only)
 # Fonts for the HUD text. "body" and "title" come from --hud-font / --hud-title-font; "fallback" (any Unicode-capable
 # font) and "emoji" (a colour emoji font) are found automatically unless --emoji-font is given.
@@ -1212,8 +1213,32 @@ def _font_for(font, txt):
     return ""
 
 
+def hud_sub(txt):
+    """Apply --hud-text replacements. Single characters (letter-spaced text drawn one at a time) are left
+    alone: their whole string was replaced before it was split."""
+    if not HUD_SUBS or len(txt) < 2:
+        return txt
+    pattern, table = HUD_SUBS
+    return pattern.sub(lambda m: table[m.group(0)], txt)
+
+
+def parse_hud_text(spec):
+    """'motion study=dance study; FORM=STYLE' -> one pattern that swaps each old text for its new one in a
+    single pass, longest first (so 'Generated with pixel-effect' wins over 'pixel-effect'), or None."""
+    table = {}
+    for part in spec.split(";"):
+        if "=" in part:
+            old, new = part.split("=", 1)
+            if len(old.strip()) >= 2:
+                table[old.strip()] = clean_text(new.strip())
+    if not table:
+        return None
+    return re.compile("|".join(re.escape(k) for k in sorted(table, key=len, reverse=True))), table
+
+
 def hud_text_size(txt, font, scale, thick):
-    """Like cv2.getTextSize, but honours --hud-text-scale, custom fonts, Unicode and emoji."""
+    """Like cv2.getTextSize, but honours --hud-text-scale, --hud-text, custom fonts, Unicode and emoji."""
+    txt = hud_sub(txt)
     scale = scale * HUD_TEXT_SCALE * (TITLE_SCALE if font in TITLE_FACES else 1.0)
     path = _font_for(font, txt)
     if not path:
@@ -1224,7 +1249,8 @@ def hud_text_size(txt, font, scale, thick):
 
 
 def put_text(img, txt, org, font, scale, color, thick=1, line=cv2.LINE_AA):
-    """Like cv2.putText, but honours --hud-text-scale, custom fonts, Unicode and colour emoji (via Pillow)."""
+    """Like cv2.putText, but honours --hud-text-scale, --hud-text, custom fonts, Unicode and colour emoji (via Pillow)."""
+    txt = hud_sub(txt)
     k = HUD_TEXT_SCALE * (TITLE_SCALE if font in TITLE_FACES else 1.0)
     scale = scale * k
     path = _font_for(font, txt)
@@ -1509,7 +1535,7 @@ def spaced_text(img, text, org, scale, color, thick, spacing, font=None):
     """Text with extra letter-spacing (OpenCV has none). Returns the x where it ended."""
     font = FONT if font is None else font
     x, y = org
-    for ch in text:
+    for ch in hud_sub(text):
         put_text(img, ch, (int(x), int(y)), font, scale, color, thick, cv2.LINE_AA)
         x += hud_text_size(ch, font, scale, thick)[0][0] + spacing
     return x
@@ -1517,7 +1543,7 @@ def spaced_text(img, text, org, scale, color, thick, spacing, font=None):
 
 def vertical_text(img, text, x, y_bottom, scale, color, thick, spacing):
     """Text running upward (rotated 90 degrees counter-clockwise), its baseline starting at (x, y_bottom)."""
-    tw = int(sum(hud_text_size(c, FONT, scale, thick)[0][0] + spacing for c in text)) + 8
+    tw = int(sum(hud_text_size(c, FONT, scale, thick)[0][0] + spacing for c in hud_sub(text))) + 8
     th_ = int(40 * scale) + 12
     tmp = np.zeros((th_, tw, 3), np.uint8)
     spaced_text(tmp, text, (2, th_ - 10), scale, color, thick, spacing)
@@ -2570,7 +2596,7 @@ MODERN_LIME = (0, 255, 198)                       # BGR #c6ff00
 
 def solid_spaced(img, text, x, y, scale, color, thick, spacing):
     """Letter-spaced text drawn solid (not brightened), one character at a time. Returns the end x."""
-    for ch in text:
+    for ch in hud_sub(text):
         if ch != " ":
             shadow_text(img, ch, (int(x), int(y)), scale, color, thick, shadow=None)
         x += text_w(ch if ch != " " else "n", scale, thick) + spacing
@@ -2578,7 +2604,7 @@ def solid_spaced(img, text, x, y, scale, color, thick, spacing):
 
 
 def spaced_width(text, scale, thick, spacing):
-    return sum(text_w(ch if ch != " " else "n", scale, thick) + spacing for ch in text) - spacing
+    return sum(text_w(ch if ch != " " else "n", scale, thick) + spacing for ch in hud_sub(text)) - spacing
 
 
 def draw_hud_modern(frame, t, frac, fps, cfg):
@@ -3128,7 +3154,7 @@ def draw_custom_sigil(img, cx, cy, size, color, th, seed, t):
 # even when it runs many times in one process (the GUI preview).
 _RESETTABLE = ("GLYPH_SIZE", "SIGIL_SCALE", "TITLE_SCALE", "CHAT_BACKDROP", "SIGIL_MASKS", "HUD_TEXT_SCALE", "cascade", "yunet",
                "HUD_PINK", "HUD_CYAN", "ANGEL_WHITE", "ANGEL_DIM", "ANGEL_RED", "TERM_ORANGE", "TERM_TEXT", "UNICODE_OK",
-               "HUD_FONT", "ENOCH", "THERMAL")
+               "HUD_FONT", "ENOCH", "THERMAL", "HUD_SUBS")
 _DEFAULTS = {name: copy.deepcopy(globals()[name]) for name in _RESETTABLE}
 
 
@@ -3230,6 +3256,8 @@ def build_parser():
     ap.add_argument("--hud-tag", default="ASCENSION.exe", help="(angelcore) small tag under the title")
     ap.add_argument("--hud-tagline", default="SERVE / PROTECT / SILENT", help="(angelcore) small spaced caps centered across the top")
     ap.add_argument("--hud-vertical", default="SYSTEM ANGEL // ONLINE", help="(angelcore) text running up the right edge")
+    ap.add_argument("--hud-text", default="", help="replace any HUD text with your own, any theme: "
+                                                   "'motion study=dance study; FORM=STYLE' (old=new pairs split by ;)")
     ap.add_argument("--overlay", default="", help="your own artwork over the video (resized to fit): a PNG with transparency, "
                                                   "or a video (MP4, MOV...) that plays in sync and loops")
     ap.add_argument("--overlay-opacity", type=float, default=1.0, help="0..1")
@@ -3292,7 +3320,7 @@ def parse_clock(text):
 def setup(args):
     """Turn parsed options into the settings the renderers use. Also sets this module's look globals
     (colors, fonts, scales, detectors), starting from the defaults each time so repeated calls don't leak."""
-    global GLYPH_SIZE, SIGIL_SCALE, TITLE_SCALE, CHAT_BACKDROP, SIGIL_MASKS, HUD_TEXT_SCALE, cascade, yunet, HUD_PINK, HUD_CYAN, ANGEL_WHITE, ANGEL_DIM, ANGEL_RED, TERM_ORANGE
+    global GLYPH_SIZE, SIGIL_SCALE, TITLE_SCALE, CHAT_BACKDROP, SIGIL_MASKS, HUD_TEXT_SCALE, HUD_SUBS, cascade, yunet, HUD_PINK, HUD_CYAN, ANGEL_WHITE, ANGEL_DIM, ANGEL_RED, TERM_ORANGE
     for name, value in _DEFAULTS.items():
         globals()[name] = copy.deepcopy(value)
     GLYPH_SIZE = max(0.2, args.glyph_size)
@@ -3310,6 +3338,7 @@ def setup(args):
             print("NOTE: --no-sigils is on, so your sigil art is hidden. Remove --no-sigils (or add --sigils after it).")
     echo_color = parse_color(args.echo_color) if args.echo_color else None
     HUD_TEXT_SCALE = max(0.3, args.hud_text_scale)
+    HUD_SUBS = parse_hud_text(args.hud_text)
     global UNICODE_OK
     for key, flag, option in (("body", args.hud_font, "--hud-font"), ("title", args.hud_title_font, "--hud-title-font"),
                               ("emoji", args.emoji_font, "--emoji-font")):

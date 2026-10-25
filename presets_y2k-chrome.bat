@@ -29,12 +29,13 @@ rem   --hud-color   main HUD text and lines: #RRGGBB or R,G,B ("" = theme defaul
 rem   --hud-tag     (angelcore) small tag under the title
 rem   --hud-tagline (angelcore) small spaced caps across the top
 rem   --hud-vertical (angelcore) text running up the right edge
+rem   --hud-text     replace any HUD text, any theme: "motion study=dance study; FORM=STYLE"
 rem   --hud-time    (still images) which second of the HUD animation to show
 rem   HUD on/off:   left out = automatic (on with --style eve or a non-eve theme)
 rem   --layout      a layout file (JSON) that moves or hides HUD elements ("" = the theme's own layout)
 rem   --hud-clock   date and time the security/vhs clocks start at, e.g. "1988-09-17 17:14" ("" = now)
 rem   switches: --hud  --no-hud  --no-lockon  --no-hearts  --no-sigils
-set HUD=--theme y2k --accent "#3dff6e" --hud-color "" --hud-title morpha --hud-tag ASCENSION.exe --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-time 6.0 --hud-clock "" --layout ""
+set HUD=--theme y2k --accent "#3dff6e" --hud-color "" --hud-title morpha --hud-tag ASCENSION.exe --hud-tagline "SERVE / PROTECT / SILENT" --hud-vertical "SYSTEM ANGEL // ONLINE" --hud-text "" --hud-time 6.0 --hud-clock "" --layout ""
 
 rem ---- FONTS: HUD text ("" = OpenCV's built-in font; title "" = same as --hud-font)
 rem   any font option takes an installed font's name ("Segoe UI Bold") or a file path
